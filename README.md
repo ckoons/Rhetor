@@ -1,6 +1,6 @@
 # Rhetor
 
-<img src="images/icon.jpg" alt="Rhetor Nebula Icon" width="200"/>
+<img src="images/icon.jpg" alt="Rhetor Nebula Icon" width="800"/>
 
 AI Communication, prompt engineering, and context management for the Tekton project ecosystem.
 
