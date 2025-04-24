@@ -1,82 +1,117 @@
-"""Helper for Hermes integration.
-
-This module provides helper functions for integrating with Hermes.
+"""
+Helper module for registering with Hermes service registry.
 """
 
 import os
-import sys
 import logging
+import json
 import asyncio
-from typing import Optional, Dict, Any, List
+from pathlib import Path
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
-async def register_with_hermes(
-    service_id: str,
-    name: str,
-    capabilities: List[str],
-    metadata: Optional[Dict[str, Any]] = None,
-    version: str = "0.1.0",
-    endpoint: Optional[str] = None
-) -> bool:
-    """Register a service with the Hermes service registry.
+HERMES_API_URL = os.environ.get("HERMES_API_URL", "http://localhost:8100")
+RHETOR_PORT = int(os.environ.get("RHETOR_PORT", 8300))
+
+# Check if this is running in the Tekton environment
+TEKTON_DIR = Path(__file__).parent.parent.parent.parent
+IS_TEKTON_ENV = TEKTON_DIR.name == "Tekton" and (TEKTON_DIR / "Hermes").exists()
+
+async def register_with_hermes():
+    """
+    Register Rhetor with the Hermes service registry.
     
-    Args:
-        service_id: Unique identifier for the service
-        name: Human-readable name for the service
-        capabilities: List of service capabilities
-        metadata: Additional metadata for the service
-        version: Service version
-        endpoint: Service endpoint URL
-        
     Returns:
-        Success status
+        True if registration successful, False otherwise
     """
     try:
-        # Find the Hermes directory by looking in the parent of the current directory
-        current_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        parent_dir = os.path.dirname(current_dir)
-        hermes_dir = os.path.join(parent_dir, "Hermes")
-        
-        if not os.path.exists(hermes_dir):
-            logger.error(f"Hermes directory not found at {hermes_dir}")
-            return False
-        
-        # Add Hermes to path if not already there
-        if hermes_dir not in sys.path:
-            sys.path.insert(0, hermes_dir)
-            logger.debug(f"Added Hermes directory to path: {hermes_dir}")
-        
-        # Import Hermes service registry
+        # Read version from package or default to 0.1.0
         try:
-            from hermes.core.service_discovery import ServiceRegistry
-        except ImportError as e:
-            logger.error(f"Could not import Hermes ServiceRegistry: {e}")
-            logger.error("Make sure Hermes is installed and in your Python path")
-            return False
+            from .. import __version__
+            version = __version__
+        except (ImportError, AttributeError):
+            version = "0.1.0"
         
-        # Create service registry client
-        registry = ServiceRegistry()
-        await registry.start()
+        # Create registration data
+        registration_data = {
+            "id": "rhetor",
+            "name": "Rhetor",
+            "description": "LLM Management System for Tekton",
+            "version": version,
+            "url": f"http://localhost:{RHETOR_PORT}",
+            "capabilities": [
+                "llm_management",
+                "prompt_engineering",
+                "context_management",
+                "model_selection"
+            ],
+            "endpoints": {
+                "http": f"http://localhost:{RHETOR_PORT}",
+                "ws": f"ws://localhost:{RHETOR_PORT}/ws"
+            },
+            "dependencies": ["engram"],
+            "lifecycle": {
+                "startup_script": "tekton-launch --components rhetor",
+                "shutdown_script": "tekton-kill",
+                "status_check": {
+                    "url": f"http://localhost:{RHETOR_PORT}/health",
+                    "success_code": 200
+                }
+            },
+            "metadata": {
+                "icon": "🗣️",
+                "ui_color": "#7e57c2",
+                "priority": 40,
+                "managed_port": RHETOR_PORT,
+                "core_component": True,
+                "replaces": "llm_adapter"
+            }
+        }
         
-        # Register the service
-        success = await registry.register(
-            service_id=service_id,
-            name=name,
-            version=version,
-            endpoint=endpoint,
-            capabilities=capabilities,
-            metadata=metadata or {}
-        )
+        # Try to register with Hermes
+        registration_url = f"{HERMES_API_URL}/api/register"
         
-        if success:
-            logger.info(f"Successfully registered {name} with Hermes")
-        else:
-            logger.warning(f"Failed to register {name} with Hermes")
-        
-        await registry.stop()
-        return success
-    
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                registration_url,
+                json=registration_data,
+                headers={"Content-Type": "application/json"}
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    logger.info(f"Successfully registered Rhetor with Hermes: {result}")
+                    
+                    # Also save registration to the Hermes registrations directory if in Tekton environment
+                    if IS_TEKTON_ENV:
+                        registrations_dir = TEKTON_DIR / "Hermes" / "registrations"
+                        if registrations_dir.exists():
+                            with open(registrations_dir / "rhetor.json", "w") as f:
+                                json.dump(registration_data, f, indent=2)
+                            logger.info(f"Saved registration to {registrations_dir / 'rhetor.json'}")
+                    
+                    return True
+                elif response.status == 404:
+                    logger.warning("Hermes service registry not found. Is Hermes running?")
+                    return False
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Failed to register with Hermes: {response.status} - {error_text}")
+                    return False
+    except aiohttp.ClientConnectorError:
+        logger.warning("Could not connect to Hermes service registry. Is Hermes running?")
+        return False
     except Exception as e:
         logger.error(f"Error registering with Hermes: {e}")
         return False
+
+if __name__ == "__main__":
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # Run the registration
+    asyncio.run(register_with_hermes())
+EOL < /dev/null

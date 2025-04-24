@@ -3,15 +3,14 @@
 from setuptools import setup, find_packages
 import os
 
-requires = [
-    'asyncio',
-    'aiohttp',
-]
+# Read requirements from file
+with open('requirements.txt') as f:
+    requires = [line.strip() for line in f if line.strip() and not line.startswith('#')]
 
 setup(
     name="rhetor",
     version="0.1.0",
-    description="AI Communication and Prompt Engineering for Tekton",
+    description="LLM Management System for Tekton",
     author="Tekton Project",
     author_email="tekton@example.com",
     url="https://github.com/example/tekton",
@@ -20,7 +19,7 @@ setup(
     install_requires=requires,
     entry_points={
         'console_scripts': [
-            'rhetor=rhetor.cli.main:main',
+            'rhetor=rhetor.__main__:main',
         ],
     },
     classifiers=[
@@ -30,5 +29,7 @@ setup(
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
     ],
+    python_requires='>=3.8',
 )

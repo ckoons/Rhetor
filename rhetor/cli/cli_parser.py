@@ -22,26 +22,91 @@ def create_parser() -> argparse.ArgumentParser:
     # Add subparsers for commands
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
     
-    # Prompt commands
-    prompt_parser = subparsers.add_parser("prompt", help="Prompt commands")
+    # Template management commands
+    template_parser = subparsers.add_parser("template", help="Template management commands")
+    template_subparsers = template_parser.add_subparsers(dest="subcommand", help="Template subcommand")
+    
+    template_list_parser = template_subparsers.add_parser("list", help="List templates")
+    template_list_parser.add_argument("--category", help="Filter by category")
+    template_list_parser.add_argument("--tag", help="Filter by tag")
+    template_list_parser.add_argument("--remote", action="store_true", help="Use remote API")
+    
+    template_create_parser = template_subparsers.add_parser("create", help="Create a template")
+    template_create_parser.add_argument("name", help="Template name")
+    template_create_parser.add_argument("--content", help="Template content")
+    template_create_parser.add_argument("--category", default="general", help="Template category")
+    template_create_parser.add_argument("--description", help="Template description")
+    template_create_parser.add_argument("--tags", help="Template tags (comma-separated)")
+    template_create_parser.add_argument("--file", help="Read template content from file")
+    template_create_parser.add_argument("--remote", action="store_true", help="Use remote API")
+    
+    template_get_parser = template_subparsers.add_parser("get", help="Get a template")
+    template_get_parser.add_argument("id", help="Template ID")
+    template_get_parser.add_argument("--version", help="Version ID")
+    template_get_parser.add_argument("--remote", action="store_true", help="Use remote API")
+    
+    template_update_parser = template_subparsers.add_parser("update", help="Update a template")
+    template_update_parser.add_argument("id", help="Template ID")
+    template_update_parser.add_argument("--content", help="New template content")
+    template_update_parser.add_argument("--file", help="Read template content from file")
+    template_update_parser.add_argument("--remote", action="store_true", help="Use remote API")
+    
+    template_delete_parser = template_subparsers.add_parser("delete", help="Delete a template")
+    template_delete_parser.add_argument("id", help="Template ID")
+    template_delete_parser.add_argument("--remote", action="store_true", help="Use remote API")
+    
+    template_versions_parser = template_subparsers.add_parser("versions", help="List template versions")
+    template_versions_parser.add_argument("id", help="Template ID")
+    template_versions_parser.add_argument("--remote", action="store_true", help="Use remote API")
+    
+    template_render_parser = template_subparsers.add_parser("render", help="Render a template")
+    template_render_parser.add_argument("id", help="Template ID")
+    template_render_parser.add_argument("--variables", help="Variable values (key=value,...)")
+    template_render_parser.add_argument("--version", help="Version ID")
+    template_render_parser.add_argument("--output", help="Output file")
+    template_render_parser.add_argument("--remote", action="store_true", help="Use remote API")
+    
+    # Prompt registry commands
+    prompt_parser = subparsers.add_parser("prompt", help="Prompt registry commands")
     prompt_subparsers = prompt_parser.add_subparsers(dest="subcommand", help="Prompt subcommand")
     
-    prompt_create_parser = prompt_subparsers.add_parser("create", help="Create a prompt template")
-    prompt_create_parser.add_argument("name", help="Template name")
-    prompt_create_parser.add_argument("template", help="Template text")
-    prompt_create_parser.add_argument("--variables", help="Variables (comma-separated)")
-    prompt_create_parser.add_argument("--description", help="Template description")
-    prompt_create_parser.add_argument("--model-type", help="Model type this template is optimized for")
+    prompt_list_parser = prompt_subparsers.add_parser("list", help="List prompts")
+    prompt_list_parser.add_argument("--component", help="Filter by component")
+    prompt_list_parser.add_argument("--tag", help="Filter by tag")
+    prompt_list_parser.add_argument("--remote", action="store_true", help="Use remote API")
     
-    prompt_list_parser = prompt_subparsers.add_parser("list", help="List prompt templates")
+    prompt_create_parser = prompt_subparsers.add_parser("create", help="Create a prompt")
+    prompt_create_parser.add_argument("name", help="Prompt name")
+    prompt_create_parser.add_argument("component", help="Component")
+    prompt_create_parser.add_argument("--content", help="Prompt content")
+    prompt_create_parser.add_argument("--description", help="Prompt description")
+    prompt_create_parser.add_argument("--tags", help="Prompt tags (comma-separated)")
+    prompt_create_parser.add_argument("--default", dest="is_default", action="store_true", help="Set as default prompt")
+    prompt_create_parser.add_argument("--parent", dest="parent_id", help="Parent prompt ID")
+    prompt_create_parser.add_argument("--file", help="Read prompt content from file")
+    prompt_create_parser.add_argument("--remote", action="store_true", help="Use remote API")
     
-    prompt_show_parser = prompt_subparsers.add_parser("show", help="Show a prompt template")
-    prompt_show_parser.add_argument("name", help="Template name")
+    prompt_get_parser = prompt_subparsers.add_parser("get", help="Get a prompt")
+    prompt_get_parser.add_argument("id", help="Prompt ID")
+    prompt_get_parser.add_argument("--remote", action="store_true", help="Use remote API")
     
-    prompt_delete_parser = prompt_subparsers.add_parser("delete", help="Delete a prompt template")
-    prompt_delete_parser.add_argument("name", help="Template name")
+    prompt_update_parser = prompt_subparsers.add_parser("update", help="Update a prompt")
+    prompt_update_parser.add_argument("id", help="Prompt ID")
+    prompt_update_parser.add_argument("--content", help="New prompt content")
+    prompt_update_parser.add_argument("--file", help="Read prompt content from file")
+    prompt_update_parser.add_argument("--remote", action="store_true", help="Use remote API")
     
-    prompt_generate_parser = prompt_subparsers.add_parser("generate", help="Generate a prompt")
+    prompt_delete_parser = prompt_subparsers.add_parser("delete", help="Delete a prompt")
+    prompt_delete_parser.add_argument("id", help="Prompt ID")
+    prompt_delete_parser.add_argument("--remote", action="store_true", help="Use remote API")
+    
+    prompt_compare_parser = prompt_subparsers.add_parser("compare", help="Compare prompts")
+    prompt_compare_parser.add_argument("id1", help="First prompt ID")
+    prompt_compare_parser.add_argument("id2", help="Second prompt ID")
+    prompt_compare_parser.add_argument("--remote", action="store_true", help="Use remote API")
+    
+    # Legacy prompt generation command
+    prompt_generate_parser = prompt_subparsers.add_parser("generate", help="Generate a prompt from template")
     prompt_generate_parser.add_argument("name", help="Template name")
     prompt_generate_parser.add_argument("--component", help="Component to adapt for")
     prompt_generate_parser.add_argument("--variables", help="Variable values (key=value,...)")
@@ -94,6 +159,34 @@ def create_parser() -> argparse.ArgumentParser:
     
     conversation_show_parser = conversation_subparsers.add_parser("show", help="Show a conversation")
     conversation_show_parser.add_argument("conversation", help="Conversation ID")
+    
+    # Context management commands
+    context_parser = subparsers.add_parser("context", help="Context management commands")
+    context_subparsers = context_parser.add_subparsers(dest="subcommand", help="Context subcommand")
+    
+    context_list_parser = context_subparsers.add_parser("list", help="List all contexts")
+    context_list_parser.add_argument("--remote", action="store_true", help="Use remote API")
+    
+    context_get_parser = context_subparsers.add_parser("get", help="Get context messages")
+    context_get_parser.add_argument("id", help="Context ID")
+    context_get_parser.add_argument("--limit", type=int, default=20, help="Maximum number of messages")
+    context_get_parser.add_argument("--metadata", action="store_true", help="Include message metadata")
+    context_get_parser.add_argument("--remote", action="store_true", help="Use remote API")
+    
+    context_delete_parser = context_subparsers.add_parser("delete", help="Delete a context")
+    context_delete_parser.add_argument("id", help="Context ID")
+    context_delete_parser.add_argument("--remote", action="store_true", help="Use remote API")
+    
+    context_search_parser = context_subparsers.add_parser("search", help="Search for messages in a context")
+    context_search_parser.add_argument("id", help="Context ID")
+    context_search_parser.add_argument("query", help="Search query")
+    context_search_parser.add_argument("--limit", type=int, default=5, help="Maximum number of results")
+    context_search_parser.add_argument("--remote", action="store_true", help="Use remote API")
+    
+    context_summarize_parser = context_subparsers.add_parser("summarize", help="Generate a summary of a context")
+    context_summarize_parser.add_argument("id", help="Context ID")
+    context_summarize_parser.add_argument("--max-tokens", type=int, default=150, help="Maximum tokens for summary")
+    context_summarize_parser.add_argument("--remote", action="store_true", help="Use remote API")
     
     # Hermes commands
     hermes_parser = subparsers.add_parser("hermes", help="Hermes commands")

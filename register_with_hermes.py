@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Register Rhetor with Hermes service registry.
 
-This script registers all Rhetor services with the Hermes service registry.
+This script registers the Rhetor LLM Management System with the Hermes service registry.
 """
 
 import os
@@ -34,43 +34,17 @@ except ImportError as e:
     logger.error("Make sure to run setup.sh first")
     sys.exit(1)
 
-async def register_rhetor_services():
-    """Register all Rhetor services with Hermes."""
+async def register_rhetor():
+    """Register Rhetor with Hermes."""
     
-    # Register prompt service
-    prompt_success = await register_with_hermes(
-        service_id="rhetor-prompt",
-        name="Rhetor Prompt Engineering",
-        capabilities=["prompt_engineering", "template_management", "personality_management"],
-        metadata={
-            "component_type": "core",
-            "description": "AI prompt engineering and management"
-        }
-    )
+    # Register with Hermes
+    success = await register_with_hermes()
     
-    # Register communication service
-    comm_success = await register_with_hermes(
-        service_id="rhetor-communication",
-        name="Rhetor Communication Engine",
-        capabilities=["messaging", "conversation_management"],
-        metadata={
-            "component_type": "core",
-            "description": "AI component communication"
-        }
-    )
-    
-    # Display results
-    if prompt_success and comm_success:
-        logger.info("Successfully registered all Rhetor services with Hermes")
+    if success:
+        logger.info("Successfully registered Rhetor with Hermes")
         return True
-    elif prompt_success:
-        logger.warning("Successfully registered prompt service, but failed to register communication service")
-        return False
-    elif comm_success:
-        logger.warning("Successfully registered communication service, but failed to register prompt service")
-        return False
     else:
-        logger.error("Failed to register any Rhetor services with Hermes")
+        logger.error("Failed to register Rhetor with Hermes")
         return False
 
 if __name__ == "__main__":
@@ -84,5 +58,5 @@ if __name__ == "__main__":
             print(f"python {os.path.basename(__file__)}")
             sys.exit(1)
     
-    success = asyncio.run(register_rhetor_services())
+    success = asyncio.run(register_rhetor())
     sys.exit(0 if success else 1)

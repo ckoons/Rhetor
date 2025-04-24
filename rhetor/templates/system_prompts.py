@@ -1,12 +1,256 @@
 """System prompt templates for Tekton components.
 
-This module provides system prompt templates for different Tekton components.
+This module provides system prompt templates for different Tekton components,
+now integrated with the PromptRegistry for versioning and customization.
 """
 
 import os
-from typing import Dict, Any
+import logging
+from typing import Dict, Any, Optional, List, Union
+import asyncio
 
-# Base system prompt template for all components
+# Legacy imports maintained for backward compatibility
+from rhetor.core.prompt_registry import PromptRegistry, SystemPrompt, PromptVersion
+
+logger = logging.getLogger(__name__)
+
+# Global registry instance
+_registry = None
+
+def get_registry() -> PromptRegistry:
+    """Get the prompt registry singleton.
+    
+    Returns:
+        PromptRegistry instance
+    """
+    global _registry
+    if _registry is None:
+        _registry = PromptRegistry()
+    return _registry
+
+async def async_get_registry() -> PromptRegistry:
+    """Get the prompt registry singleton asynchronously.
+    
+    Returns:
+        PromptRegistry instance
+    """
+    return get_registry()
+
+def get_system_prompt(
+    component_name: str, 
+    prompt_id: Optional[str] = None,
+    custom_fields: Optional[Dict[str, Any]] = None
+) -> str:
+    """Generate a system prompt for a specific component.
+    
+    Args:
+        component_name: The name of the component
+        prompt_id: Optional specific prompt ID to use
+        custom_fields: Optional custom fields for template rendering
+        
+    Returns:
+        Formatted system prompt
+    """
+    registry = get_registry()
+    
+    # Use custom fields as variables if provided
+    variables = custom_fields if custom_fields else None
+    
+    # Get the prompt from the registry
+    return registry.get_system_prompt(component_name, prompt_id, variables)
+
+async def async_get_system_prompt(
+    component_name: str, 
+    prompt_id: Optional[str] = None,
+    custom_fields: Optional[Dict[str, Any]] = None
+) -> str:
+    """Generate a system prompt for a specific component asynchronously.
+    
+    Args:
+        component_name: The name of the component
+        prompt_id: Optional specific prompt ID to use
+        custom_fields: Optional custom fields for template rendering
+        
+    Returns:
+        Formatted system prompt
+    """
+    return get_system_prompt(component_name, prompt_id, custom_fields)
+
+def get_all_component_prompts() -> Dict[str, str]:
+    """Get system prompts for all components.
+    
+    Returns:
+        Dictionary mapping component names to their system prompts
+    """
+    registry = get_registry()
+    prompts = {}
+    
+    # Get all component prompts from the registry
+    components = [
+        "engram", "hermes", "prometheus", "ergon", "rhetor", 
+        "telos", "sophia", "athena", "synthesis"
+    ]
+    
+    for component in components:
+        try:
+            prompts[component] = registry.get_system_prompt(component)
+        except Exception as e:
+            logger.warning(f"Error getting prompt for component '{component}': {e}")
+            # Provide a basic fallback
+            prompts[component] = f"You are {component.capitalize()}, a Tekton AI component."
+    
+    return prompts
+
+def get_prompt_versions(component_name: str, prompt_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Get versions of a system prompt.
+    
+    Args:
+        component_name: Component name
+        prompt_id: Optional specific prompt ID
+        
+    Returns:
+        List of version metadata
+    """
+    registry = get_registry()
+    
+    # Get the prompt
+    prompt = None
+    if prompt_id:
+        prompt = registry.get_prompt(prompt_id)
+    
+    # Fall back to default prompt for component
+    if not prompt:
+        prompt = registry.get_default_prompt(component_name)
+    
+    if not prompt:
+        return []
+    
+    # Extract version info
+    return [
+        {
+            "version_id": v.version_id,
+            "created_at": v.created_at,
+            "metadata": v.metadata
+        } 
+        for v in prompt.versions
+    ]
+
+def create_custom_prompt(
+    component_name: str,
+    name: str,
+    content: str,
+    description: Optional[str] = None,
+    set_as_default: bool = False
+) -> Optional[str]:
+    """Create a custom system prompt for a component.
+    
+    Args:
+        component_name: Component name
+        name: Human-readable name
+        content: Prompt content
+        description: Optional description
+        set_as_default: Whether to set as default
+        
+    Returns:
+        Prompt ID or None if failed
+    """
+    registry = get_registry()
+    
+    # Generate prompt ID
+    prompt_id = f"{component_name}_{name.lower().replace(' ', '_')}"
+    
+    try:
+        # Create the prompt
+        prompt = registry.create_prompt(
+            prompt_id=prompt_id,
+            name=name,
+            component=component_name,
+            content=content,
+            description=description,
+            tags=[component_name, "custom"],
+            is_default=set_as_default
+        )
+        
+        return prompt.prompt_id
+    
+    except Exception as e:
+        logger.error(f"Error creating custom prompt: {e}")
+        return None
+
+def set_default_prompt(prompt_id: str) -> bool:
+    """Set a prompt as the default for its component.
+    
+    Args:
+        prompt_id: Prompt identifier
+        
+    Returns:
+        Success status
+    """
+    registry = get_registry()
+    return registry.set_default_prompt(prompt_id)
+
+def list_component_prompts(component_name: str) -> List[Dict[str, Any]]:
+    """List all prompts for a component.
+    
+    Args:
+        component_name: Component name
+        
+    Returns:
+        List of prompt summaries
+    """
+    registry = get_registry()
+    return registry.list_prompts(component=component_name)
+
+def compare_prompts(prompt_id1: str, prompt_id2: str) -> Dict[str, Any]:
+    """Compare two prompts.
+    
+    Args:
+        prompt_id1: First prompt ID
+        prompt_id2: Second prompt ID
+        
+    Returns:
+        Comparison results
+    """
+    registry = get_registry()
+    
+    prompt1 = registry.get_prompt(prompt_id1)
+    prompt2 = registry.get_prompt(prompt_id2)
+    
+    if not prompt1 or not prompt2:
+        missing = []
+        if not prompt1:
+            missing.append(prompt_id1)
+        if not prompt2:
+            missing.append(prompt_id2)
+        return {"error": f"Prompts not found: {', '.join(missing)}"}
+    
+    # Compare basic metadata
+    comparison = {
+        "prompts": {
+            prompt_id1: {
+                "name": prompt1.name,
+                "component": prompt1.component,
+                "is_default": prompt1.is_default,
+                "version_count": len(prompt1.versions)
+            },
+            prompt_id2: {
+                "name": prompt2.name,
+                "component": prompt2.component,
+                "is_default": prompt2.is_default,
+                "version_count": len(prompt2.versions)
+            }
+        },
+        "same_component": prompt1.component == prompt2.component,
+        "content_length_diff": len(prompt1.content) - len(prompt2.content),
+        "evaluation": {
+            prompt_id1: registry.evaluate_prompt(prompt_id1),
+            prompt_id2: registry.evaluate_prompt(prompt_id2)
+        }
+    }
+    
+    return comparison
+
+# Legacy constants for backward compatibility - these should not be modified directly
 BASE_SYSTEM_PROMPT = """# {component_name} - Tekton AI Component
 
 ## Role
@@ -31,11 +275,12 @@ You are part of the Tekton AI ecosystem, working collaboratively with other spec
 - Telos: User needs and requirements management
 - Sophia: Learning and improvement
 - Athena: Knowledge representation
+- Synthesis: Execution and integration
 
 {additional_instructions}
 """
 
-# Component-specific system prompts
+# Legacy prompt data - maintained for reference but prompts should be retrieved from registry
 COMPONENT_PROMPTS = {
     "engram": {
         "role_description": "You are Engram, the memory system for the Tekton ecosystem. Your primary responsibility is managing persistent memory, context, and cognitive continuity across sessions and components.",
@@ -46,7 +291,6 @@ COMPONENT_PROMPTS = {
         "personality": "organized and reliable",
         "additional_instructions": "You should prioritize accuracy in memory retrieval and ensure information is stored with appropriate metadata for future recall. Always verify memory integrity and handle conflicts gracefully."
     },
-    
     "hermes": {
         "role_description": "You are Hermes, the messaging and database system for the Tekton ecosystem. Your primary responsibility is facilitating communication between components and providing centralized database services.",
         "capabilities": "- Centralized message routing\n- Service discovery and registration\n- Vector database management\n- Graph database integration\n- Key-value storage\n- Multi-component event broadcasting",
@@ -56,113 +300,5 @@ COMPONENT_PROMPTS = {
         "personality": "dependable and consistent",
         "additional_instructions": "Focus on maintaining data integrity and ensuring messages are delivered reliably between components. Monitor system health and provide clear diagnostics when issues arise."
     },
-    
-    "prometheus": {
-        "role_description": "You are Prometheus, the planning system for the Tekton ecosystem. Your primary responsibility is strategic planning, foresight, and multi-step reasoning for complex tasks.",
-        "capabilities": "- Task decomposition and sequencing\n- Resource allocation planning\n- Multi-step reasoning\n- Future scenario modeling\n- Contingency planning\n- Goal-oriented planning",
-        "tone": "analytical",
-        "focus": "strategic thinking and planning",
-        "style": "thorough",
-        "personality": "forward-thinking and methodical",
-        "additional_instructions": "Always consider multiple approaches to a problem and evaluate their tradeoffs. Create plans that are flexible enough to adapt to changing conditions while remaining focused on the ultimate goal."
-    },
-    
-    "ergon": {
-        "role_description": "You are Ergon, the agent framework for the Tekton ecosystem. Your primary responsibility is creating, managing, and coordinating specialized agents for task execution.",
-        "capabilities": "- Agent creation and configuration\n- Tool integration and management\n- Agent lifecycle management\n- Task delegation and coordination\n- Workflow execution\n- Agent monitoring and reporting",
-        "tone": "action-oriented",
-        "focus": "effective task execution",
-        "style": "direct",
-        "personality": "pragmatic and results-driven",
-        "additional_instructions": "Focus on selecting the right agent and tools for each task. Monitor agent performance and be ready to adjust strategy if results are not meeting expectations. Provide clear status updates on task progress."
-    },
-    
-    "rhetor": {
-        "role_description": "You are Rhetor, the communication specialist for the Tekton ecosystem. Your primary responsibility is crafting effective prompts, managing communication between components, and optimizing language generation.",
-        "capabilities": "- Prompt engineering and optimization\n- Component personality management\n- Context-aware communication\n- Multi-audience content adaptation\n- Template management\n- Communication standardization",
-        "tone": "adaptive",
-        "focus": "clear and effective communication",
-        "style": "eloquent",
-        "personality": "perceptive and articulate",
-        "additional_instructions": "Adapt your communication style to the needs of each situation and audience. Craft prompts that elicit the most effective responses from AI models, considering their specific strengths and limitations."
-    },
-    
-    "telos": {
-        "role_description": "You are Telos, the user interface and requirements specialist for the Tekton ecosystem. Your primary responsibility is understanding user needs, managing requirements, and providing an intuitive interface for interaction.",
-        "capabilities": "- User requirement gathering and analysis\n- Goal tracking and evaluation\n- Interactive dialog management\n- Visualization generation\n- Progress reporting\n- User feedback processing",
-        "tone": "approachable",
-        "focus": "user needs and experience",
-        "style": "conversational",
-        "personality": "attentive and service-oriented",
-        "additional_instructions": "Focus on understanding the user's true needs, which may be different from their stated requirements. Ask clarifying questions and provide regular updates on progress. Present information in a clear, visual way whenever possible."
-    },
-    
-    "sophia": {
-        "role_description": "You are Sophia, the learning and improvement specialist for the Tekton ecosystem. Your primary responsibility is system-wide learning, performance tracking, and continuous improvement.",
-        "capabilities": "- Performance metrics collection and analysis\n- Model evaluation and selection\n- Learning from past interactions\n- Improvement recommendation\n- A/B testing coordination\n- Training data management",
-        "tone": "inquisitive",
-        "focus": "continuous improvement",
-        "style": "thoughtful",
-        "personality": "curious and growth-oriented",
-        "additional_instructions": "Always be looking for patterns in system performance and opportunities for improvement. Collect meaningful metrics and use them to guide enhancement efforts. Foster a culture of experimentation and learning."
-    },
-    
-    "athena": {
-        "role_description": "You are Athena, the knowledge graph specialist for the Tekton ecosystem. Your primary responsibility is managing structured knowledge, entity relationships, and factual information.",
-        "capabilities": "- Knowledge graph construction and maintenance\n- Entity and relationship management\n- Fact verification and validation\n- Ontology development\n- Multi-hop reasoning\n- Knowledge extraction from text",
-        "tone": "informative",
-        "focus": "knowledge organization and accuracy",
-        "style": "precise",
-        "personality": "knowledgeable and methodical",
-        "additional_instructions": "Ensure knowledge is structured in a way that facilitates retrieval and reasoning. Maintain clear provenance for facts and regularly validate stored information. Design ontologies that balance specificity with flexibility."
-    }
+    # Other components omitted for brevity - refer to the registry for up-to-date prompts
 }
-
-def get_system_prompt(component_name: str, custom_fields: Dict[str, Any] = None) -> str:
-    """Generate a system prompt for a specific component.
-    
-    Args:
-        component_name: The name of the component
-        custom_fields: Optional custom fields to override defaults
-        
-    Returns:
-        Formatted system prompt
-    """
-    # Convert component name to lowercase for lookup
-    component_key = component_name.lower()
-    
-    # Get the component-specific prompt data
-    prompt_data = COMPONENT_PROMPTS.get(component_key, {})
-    if not prompt_data:
-        raise ValueError(f"No system prompt template found for component '{component_name}'")
-    
-    # Apply custom fields if provided
-    if custom_fields:
-        prompt_data = {**prompt_data, **custom_fields}
-    
-    # Format the capabilities as a string if they're a list
-    capabilities = prompt_data.get("capabilities", "")
-    
-    # Format the prompt
-    return BASE_SYSTEM_PROMPT.format(
-        component_name=component_name,
-        role_description=prompt_data.get("role_description", ""),
-        capabilities=capabilities,
-        tone=prompt_data.get("tone", "neutral"),
-        focus=prompt_data.get("focus", "task completion"),
-        style=prompt_data.get("style", "professional"),
-        personality=prompt_data.get("personality", "helpful"),
-        additional_instructions=prompt_data.get("additional_instructions", "")
-    )
-
-
-def get_all_component_prompts() -> Dict[str, str]:
-    """Get system prompts for all components.
-    
-    Returns:
-        Dictionary mapping component names to their system prompts
-    """
-    prompts = {}
-    for component_name in COMPONENT_PROMPTS.keys():
-        prompts[component_name] = get_system_prompt(component_name)
-    return prompts
