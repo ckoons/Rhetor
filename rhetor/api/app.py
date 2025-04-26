@@ -954,7 +954,10 @@ async def websocket_endpoint(websocket: WebSocket):
         except:
             pass
 
-async def start_server(host="0.0.0.0", port=8300, log_level="info"):
+async def start_server(host="0.0.0.0", port=None, log_level="info"):
+    # Use environment variable with fallback
+    if port is None:
+        port = int(os.environ.get("RHETOR_PORT", 8003))
     """
     Start the Rhetor API server.
     
@@ -973,7 +976,10 @@ async def start_server(host="0.0.0.0", port=8300, log_level="info"):
     server = uvicorn.Server(config)
     await server.serve()
 
-def run_server(host="0.0.0.0", port=8300, log_level="info"):
+def run_server(host="0.0.0.0", port=None, log_level="info"):
+    # Use environment variable with fallback
+    if port is None:
+        port = int(os.environ.get("RHETOR_PORT", 8003))
     """
     Run the Rhetor API server.
     
@@ -990,7 +996,7 @@ def run_server(host="0.0.0.0", port=8300, log_level="info"):
     )
 
 if __name__ == "__main__":
-    port = int(os.environ.get("RHETOR_PORT", 8300))
+    port = int(os.environ.get("RHETOR_PORT", 8003))
     log_level = os.environ.get("RHETOR_LOG_LEVEL", "info")
     
     logger.info(f"Starting Rhetor API server on port {port}")
