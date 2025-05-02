@@ -10,6 +10,16 @@ import asyncio
 from typing import Dict, List, Optional, Any, AsyncGenerator, Union
 from datetime import datetime
 
+# Import enhanced LLM client features
+from tekton_llm_client import (
+    TektonLLMClient,
+    PromptTemplateRegistry, PromptTemplate, load_template,
+    JSONParser, parse_json, extract_json,
+    StreamHandler, collect_stream, stream_to_string,
+    StructuredOutputParser, OutputFormat,
+    ClientSettings, LLMSettings, load_settings, get_env
+)
+
 logger = logging.getLogger(__name__)
 
 class LLMClient:
@@ -24,14 +34,22 @@ class LLMClient:
             default_model: Default model ID to use (provider-specific)
         """
         self.providers = {}
-        self.default_provider_id = default_provider
-        self.default_model = default_model
+        self.default_provider_id = default_provider or get_env("LLM_PROVIDER", "anthropic")
+        self.default_model = default_model or get_env("LLM_MODEL", None)
         self.provider_defaults = {
             "anthropic": "claude-3-sonnet-20240229",
             "openai": "gpt-4o",
             "ollama": "llama3",
             "simulated": "simulated-standard"
         }
+        
+        # Initialize prompt template registry
+        self.prompt_registry = PromptTemplateRegistry()
+        
+        # Load default templates if directory exists
+        templates_dir = os.path.join(os.path.dirname(__file__), "..", "templates")
+        if os.path.exists(templates_dir):
+            self.prompt_registry.load_from_directory(templates_dir)
     
     async def initialize(self):
         """Initialize all providers."""
@@ -124,6 +142,26 @@ class LLMClient:
         
         return result
     
+    def render_prompt(self, template_name, **kwargs):
+        """Render a prompt template with variables.
+        
+        Args:
+            template_name: Name of the template to render
+            **kwargs: Variables to render the template with
+            
+        Returns:
+            Rendered prompt string
+        """
+        return self.prompt_registry.render(template_name, **kwargs)
+    
+    def register_template(self, template_data):
+        """Register a prompt template.
+        
+        Args:
+            template_data: Template data as a dictionary with name, template, and description
+        """
+        self.prompt_registry.register(template_data)
+    
     async def complete(
         self,
         message: str,
@@ -215,7 +253,8 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         provider_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        options: Optional[Dict[str, Any]] = None
+        options: Optional[Dict[str, Any]] = None,
+        transform=None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Stream a completion from an LLM.
@@ -227,6 +266,7 @@ class LLMClient:
             provider_id: Provider ID to use (defaults to default_provider_id)
             model_id: Model ID to use (defaults to provider's default)
             options: Additional options for the LLM
+            transform: Optional transformation function to apply to each chunk
             
         Yields:
             Dictionaries with response chunks
@@ -241,31 +281,28 @@ class LLMClient:
             # Get the model
             model = model_id or self.default_model or provider.default_model
             
-            # Stream the completion
-            async for chunk in provider.stream(
+            # Use the StreamHandler for managing the stream
+            stream = provider.stream(
                 message=message,
                 system_prompt=system_prompt,
                 model=model,
                 options=options
-            ):
-                yield {
-                    "chunk": chunk,
-                    "context": context_id,
+            )
+            
+            handler = StreamHandler()
+            
+            # Process the stream with custom handlers
+            async for chunk in handler.process_stream_with_context(
+                stream,
+                transform=transform,
+                context={
+                    "context_id": context_id,
                     "model": model,
                     "provider": provider.provider_id,
-                    "timestamp": datetime.now().isoformat(),
-                    "done": False
+                    "timestamp": lambda: datetime.now().isoformat(),
                 }
-            
-            # Final message indicating completion
-            yield {
-                "chunk": "",
-                "context": context_id,
-                "model": model,
-                "provider": provider.provider_id,
-                "timestamp": datetime.now().isoformat(),
-                "done": True
-            }
+            ):
+                yield chunk
             
         except Exception as e:
             logger.error(f"Error streaming completion: {e}")
@@ -277,34 +314,30 @@ class LLMClient:
                     fallback_provider = self.get_provider(fallback_provider_id)
                     fallback_model = options.get("fallback_model") or fallback_provider.default_model
                     
-                    # Stream with fallback
-                    async for chunk in fallback_provider.stream(
+                    # Stream with fallback using StreamHandler
+                    stream = fallback_provider.stream(
                         message=message,
                         system_prompt=system_prompt,
                         model=fallback_model,
                         options=options
-                    ):
-                        yield {
-                            "chunk": chunk,
-                            "context": context_id,
+                    )
+                    
+                    handler = StreamHandler()
+                    
+                    # Process the stream with custom handlers
+                    async for chunk in handler.process_stream_with_context(
+                        stream,
+                        transform=transform,
+                        context={
+                            "context_id": context_id,
                             "model": fallback_model,
                             "provider": fallback_provider.provider_id,
                             "fallback": True,
-                            "timestamp": datetime.now().isoformat(),
-                            "done": False
+                            "timestamp": lambda: datetime.now().isoformat(),
                         }
-                    
-                    # Final message for fallback
-                    yield {
-                        "chunk": "",
-                        "context": context_id,
-                        "model": fallback_model,
-                        "provider": fallback_provider.provider_id,
-                        "fallback": True,
-                        "timestamp": datetime.now().isoformat(),
-                        "done": True
-                    }
-                    
+                    ):
+                        yield chunk
+                        
                     return
                     
                 except Exception as fallback_error:
@@ -326,7 +359,8 @@ class LLMClient:
         provider_id: Optional[str] = None,
         model_id: Optional[str] = None,
         streaming: bool = False,
-        options: Optional[Dict[str, Any]] = None
+        options: Optional[Dict[str, Any]] = None,
+        parse_json_response: bool = False
     ) -> Dict[str, Any]:
         """
         Complete a chat conversation with an LLM.
@@ -339,6 +373,7 @@ class LLMClient:
             model_id: Model ID to use (defaults to provider's default)
             streaming: Whether to stream the response
             options: Additional options for the LLM
+            parse_json_response: Whether to parse the response as JSON
             
         Returns:
             Dictionary with response data
@@ -365,6 +400,14 @@ class LLMClient:
             # Add context info
             response["context"] = context_id
             
+            # Parse JSON if requested
+            if parse_json_response and "content" in response:
+                try:
+                    response["parsed_content"] = parse_json(response["content"])
+                except Exception as e:
+                    logger.warning(f"Failed to parse JSON response: {e}")
+                    response["parsing_error"] = str(e)
+            
             return response
             
         except Exception as e:
@@ -390,6 +433,14 @@ class LLMClient:
                     response["context"] = context_id
                     response["fallback"] = True
                     
+                    # Parse JSON if requested
+                    if parse_json_response and "content" in response:
+                        try:
+                            response["parsed_content"] = parse_json(response["content"])
+                        except Exception as parse_e:
+                            logger.warning(f"Failed to parse JSON response: {parse_e}")
+                            response["parsing_error"] = str(parse_e)
+                    
                     return response
                     
                 except Exception as fallback_error:
@@ -409,7 +460,8 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         provider_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        options: Optional[Dict[str, Any]] = None
+        options: Optional[Dict[str, Any]] = None,
+        transform=None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Stream a chat completion from an LLM.
@@ -421,6 +473,7 @@ class LLMClient:
             provider_id: Provider ID to use (defaults to default_provider_id)
             model_id: Model ID to use (defaults to provider's default)
             options: Additional options for the LLM
+            transform: Optional transformation function to apply to each chunk
             
         Yields:
             Dictionaries with response chunks
@@ -435,31 +488,28 @@ class LLMClient:
             # Get the model
             model = model_id or self.default_model or provider.default_model
             
-            # Stream the chat completion
-            async for chunk in provider.chat_stream(
+            # Stream the chat completion using the StreamHandler
+            stream = provider.chat_stream(
                 messages=messages,
                 system_prompt=system_prompt,
                 model=model,
                 options=options
-            ):
-                yield {
-                    "chunk": chunk,
-                    "context": context_id,
+            )
+            
+            handler = StreamHandler()
+            
+            # Process the stream with custom handlers
+            async for chunk in handler.process_stream_with_context(
+                stream,
+                transform=transform,
+                context={
+                    "context_id": context_id,
                     "model": model,
                     "provider": provider.provider_id,
-                    "timestamp": datetime.now().isoformat(),
-                    "done": False
+                    "timestamp": lambda: datetime.now().isoformat(),
                 }
-            
-            # Final message indicating completion
-            yield {
-                "chunk": "",
-                "context": context_id,
-                "model": model,
-                "provider": provider.provider_id,
-                "timestamp": datetime.now().isoformat(),
-                "done": True
-            }
+            ):
+                yield chunk
             
         except Exception as e:
             logger.error(f"Error streaming chat: {e}")
@@ -471,33 +521,29 @@ class LLMClient:
                     fallback_provider = self.get_provider(fallback_provider_id)
                     fallback_model = options.get("fallback_model") or fallback_provider.default_model
                     
-                    # Stream with fallback
-                    async for chunk in fallback_provider.chat_stream(
+                    # Stream with fallback using StreamHandler
+                    stream = fallback_provider.chat_stream(
                         messages=messages,
                         system_prompt=system_prompt,
                         model=fallback_model,
                         options=options
-                    ):
-                        yield {
-                            "chunk": chunk,
-                            "context": context_id,
+                    )
+                    
+                    handler = StreamHandler()
+                    
+                    # Process the stream with custom handlers
+                    async for chunk in handler.process_stream_with_context(
+                        stream,
+                        transform=transform,
+                        context={
+                            "context_id": context_id,
                             "model": fallback_model,
                             "provider": fallback_provider.provider_id,
                             "fallback": True,
-                            "timestamp": datetime.now().isoformat(),
-                            "done": False
+                            "timestamp": lambda: datetime.now().isoformat(),
                         }
-                    
-                    # Final message for fallback
-                    yield {
-                        "chunk": "",
-                        "context": context_id,
-                        "model": fallback_model,
-                        "provider": fallback_provider.provider_id,
-                        "fallback": True,
-                        "timestamp": datetime.now().isoformat(),
-                        "done": True
-                    }
+                    ):
+                        yield chunk
                     
                     return
                     

@@ -2,6 +2,8 @@
 
 This module provides a registry for managing system prompts with versioning,
 component-specific customization, and evaluation tools.
+
+It integrates with the tekton-llm-client PromptTemplateRegistry for enhanced features.
 """
 
 import os
@@ -15,6 +17,12 @@ from pathlib import Path
 from datetime import datetime
 import uuid
 import re
+
+# Import enhanced LLM client features
+from tekton_llm_client import (
+    PromptTemplateRegistry, PromptTemplate, load_template,
+    ClientSettings, LLMSettings, load_settings, get_env
+)
 
 from rhetor.core.template_manager import TemplateManager, Template
 
@@ -262,6 +270,12 @@ class PromptRegistry:
         self.template_manager = template_manager
         self.prompts: Dict[str, SystemPrompt] = {}
         
+        # Create a tekton-llm-client PromptTemplateRegistry for enhanced features
+        self.template_registry = PromptTemplateRegistry()
+        
+        # Load templates from the standard locations
+        self._load_template_files()
+        
         # Create prompt directories if they don't exist
         self._ensure_directories()
         
@@ -270,6 +284,16 @@ class PromptRegistry:
         
         # Create default prompts if they don't exist
         self._create_default_prompts()
+    
+    def _load_template_files(self):
+        """Load template files from standard locations."""
+        # Look for templates in the rhetor/templates directory
+        templates_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "prompts")
+        
+        if os.path.exists(templates_dir):
+            logger.info(f"Loading templates from {templates_dir}")
+            self.template_registry.load_from_directory(templates_dir)
+            logger.info(f"Loaded {len(self.template_registry.templates)} templates from directory")
     
     def _ensure_directories(self) -> None:
         """Ensure all necessary directories exist."""
@@ -376,6 +400,45 @@ class PromptRegistry:
                 "additional_instructions": "Ensure processes are executed reliably and consistently. Handle errors gracefully and provide clear feedback about progress and issues. Optimize resource usage while maintaining execution quality."
             }
         }
+        
+        # Register templates with the LLM client registry
+        for component, data in component_prompts.items():
+            template_name = f"{component}_system_prompt"
+            
+            # Only register if not already registered
+            if template_name not in self.template_registry.list_templates():
+                self.template_registry.register({
+                    "name": template_name,
+                    "template": """# {component_name} - Tekton AI Component
+
+## Role
+{{ role_description }}
+
+## Capabilities
+{{ capabilities }}
+
+## Communication Style
+- Tone: {{ tone }}
+- Focus: {{ focus }}
+- Style: {{ style }}
+- Personality: {{ personality }}
+
+## Collaboration
+You are part of the Tekton AI ecosystem, working collaboratively with other specialized components:
+- Engram: Memory and context management
+- Hermes: Database services and communication
+- Prometheus: Planning and foresight
+- Ergon: Task execution and agent management
+- Rhetor: Communication and prompt engineering
+- Telos: User needs and requirements management
+- Sophia: Learning and improvement
+- Athena: Knowledge representation
+- Synthesis: Execution and integration
+
+{{ additional_instructions }}
+""",
+                    "description": f"System prompt template for {component}"
+                })
         
         # Base template
         base_template = """# {component_name} - Tekton AI Component
@@ -628,6 +691,16 @@ You are part of the Tekton AI ecosystem, working collaboratively with other spec
         # Save to disk
         self.save_prompt(prompt)
         
+        # Also register with the template registry
+        # Only if it's not already there and useful as a template
+        if (not any(t.name == prompt_id for t in self.template_registry.templates.values()) and 
+            '{' in content and '}' in content):
+            self.template_registry.register({
+                "name": prompt_id,
+                "template": content,
+                "description": description or name
+            })
+        
         return prompt
     
     def update_prompt(
@@ -656,6 +729,17 @@ You are part of the Tekton AI ecosystem, working collaboratively with other spec
         
         # Save to disk
         self.save_prompt(prompt)
+        
+        # Update in template registry if it exists
+        if prompt_id in self.template_registry.list_templates():
+            if '{' in content and '}' in content:
+                # Only update if it still has template variables
+                self.template_registry.update(prompt_id, {
+                    "template": content
+                })
+            else:
+                # Not a template anymore, so unregister
+                self.template_registry.unregister(prompt_id)
         
         return prompt
     
@@ -759,6 +843,10 @@ You are part of the Tekton AI ecosystem, working collaboratively with other spec
             # Remove from memory
             del self.prompts[prompt_id]
             
+            # Remove from template registry if it exists
+            if prompt_id in self.template_registry.list_templates():
+                self.template_registry.unregister(prompt_id)
+            
             # Remove from disk
             if file_path.exists():
                 # Create backup before deletion
@@ -846,7 +934,11 @@ You are part of the Tekton AI ecosystem, working collaboratively with other spec
             else:
                 content = prompt.content
             
-            # Use template manager if available, otherwise simple formatting
+            # First try to use the template registry
+            if prompt_id in self.template_registry.list_templates():
+                return self.template_registry.render(prompt_id, **variables)
+            
+            # Otherwise, use the template manager if available
             if self.template_manager:
                 # Create a temporary template
                 temp_id = f"temp_{uuid.uuid4()}"
@@ -1081,90 +1173,24 @@ You are part of the Tekton AI ecosystem, working collaboratively with other spec
             List of prompts for the component
         """
         return [p for p in self.prompts.values() if p.component == component]
-    
-    def import_prompts_from_templates(self) -> int:
-        """Import prompts from templates.
+
+    # New method to render a template using tekton-llm-client PromptTemplateRegistry
+    def render_template(self, template_name: str, **kwargs) -> str:
+        """Render a template using the tekton-llm-client PromptTemplateRegistry.
         
+        Args:
+            template_name: Name of the template to render
+            **kwargs: Variables to use in template rendering
+            
         Returns:
-            Number of prompts imported
+            Rendered template string
         """
-        if not self.template_manager:
-            return 0
-        
-        count = 0
-        
-        # Look for templates in the "system" category
-        system_templates = self.template_manager.get_category_templates("system")
-        for template in system_templates:
-            # Check if this template might be a system prompt
-            if "component" in template.metadata:
-                component = template.metadata["component"]
-                
-                # Create prompt ID
-                prompt_id = f"{component}_{template.template_id}"
-                
-                # Skip if prompt already exists
-                if prompt_id in self.prompts:
-                    continue
-                
-                # Create new prompt from template
-                prompt = self.create_prompt(
-                    prompt_id=prompt_id,
-                    name=template.name,
-                    component=component,
-                    content=template.content,
-                    description=template.description,
-                    tags=template.tags,
-                    metadata={"imported_from_template": template.template_id}
-                )
-                
-                count += 1
-        
-        return count
-    
-    def export_prompts_to_templates(self) -> int:
-        """Export prompts to templates.
-        
-        Returns:
-            Number of prompts exported
-        """
-        if not self.template_manager:
-            return 0
-        
-        count = 0
-        
-        # Export all prompts as templates
-        for prompt in self.prompts.values():
-            # Create template ID
-            template_id = f"system_prompt_{prompt.component}_{prompt.prompt_id}"
-            
-            # Create template metadata
-            metadata = {
-                "component": prompt.component,
-                "exported_from_prompt": prompt.prompt_id,
-                "is_default": prompt.is_default
-            }
-            
-            # Create or update template
-            template = self.template_manager.get_template(template_id)
-            if template:
-                # Update existing template
-                self.template_manager.update_template(
-                    template_id=template_id,
-                    content=prompt.content,
-                    metadata=metadata
-                )
-            else:
-                # Create new template
-                self.template_manager.create_template(
-                    name=prompt.name,
-                    content=prompt.content,
-                    category="system",
-                    description=prompt.description,
-                    tags=prompt.tags,
-                    metadata=metadata
-                )
-            
-            count += 1
-        
-        return count
+        try:
+            return self.template_registry.render(template_name, **kwargs)
+        except Exception as e:
+            logger.error(f"Error rendering template '{template_name}': {e}")
+            # Fall back to standard rendering if possible
+            prompt = self.get_prompt(template_name)
+            if prompt:
+                return self.render_prompt_with_template(template_name, kwargs)
+            return f"Error rendering template '{template_name}': {e}"
