@@ -10,6 +10,10 @@ import asyncio
 from typing import Dict, List, Optional, Any, AsyncGenerator, Union
 from datetime import datetime
 
+# Import and apply the registry fix
+from .registry_fix import apply_fix
+apply_fix()  # Add missing load_from_directory method
+
 # Import enhanced LLM client features
 from tekton_llm_client import (
     TektonLLMClient,

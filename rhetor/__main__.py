@@ -8,6 +8,7 @@ import logging
 import argparse
 
 from rhetor.api.app import run_server
+from rhetor.utils.port_config import get_rhetor_port
 
 # Configure logging
 logging.basicConfig(
@@ -22,8 +23,8 @@ def main():
     parser.add_argument(
         "--port", "-p", 
         type=int, 
-        default=int(os.environ.get("RHETOR_PORT", 8300)),
-        help="Port to run the server on (default: 8300)"
+        default=get_rhetor_port(),
+        help="Port to run the server on (default: 8003)"
     )
     parser.add_argument(
         "--host", 

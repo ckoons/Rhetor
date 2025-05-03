@@ -1,1 +1,1 @@
-# Rhetor utils package
+"""Utility modules for the Rhetor component."""
