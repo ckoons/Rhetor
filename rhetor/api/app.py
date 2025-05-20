@@ -39,6 +39,14 @@ logger = logging.getLogger("rhetor.api")
 # Initialize FastAPI app
 app = FastAPI(title="Rhetor LLM Manager", version="1.0.0")
 
+# Add FastMCP endpoints
+try:
+    from .fastmcp_endpoints import mcp_router
+    app.include_router(mcp_router)
+    logger.info("FastMCP endpoints added to Rhetor API")
+except ImportError as e:
+    logger.warning(f"FastMCP endpoints not available: {e}")
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
