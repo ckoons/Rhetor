@@ -12,9 +12,9 @@ from tekton.mcp.fastmcp.schema import MCPCapability
 class LLMManagementCapability(MCPCapability):
     """Capability for managing LLM models and providers."""
     
-    name = "llm_management"
-    description = "Manage large language models, providers, and routing"
-    version = "1.0.0"
+    name: str = "llm_management"
+    description: str = "Manage large language models, providers, and routing"
+    version: str = "1.0.0"
     
     @classmethod
     def get_supported_operations(cls) -> List[str]:
@@ -45,9 +45,9 @@ class LLMManagementCapability(MCPCapability):
 class PromptEngineeringCapability(MCPCapability):
     """Capability for prompt engineering and template management."""
     
-    name = "prompt_engineering"
-    description = "Engineer and optimize prompts, manage templates"
-    version = "1.0.0"
+    name: str = "prompt_engineering"
+    description: str = "Engineer and optimize prompts, manage templates"
+    version: str = "1.0.0"
     
     @classmethod
     def get_supported_operations(cls) -> List[str]:
@@ -78,9 +78,9 @@ class PromptEngineeringCapability(MCPCapability):
 class ContextManagementCapability(MCPCapability):
     """Capability for context and conversation management."""
     
-    name = "context_management"
-    description = "Manage conversation context and memory optimization"
-    version = "1.0.0"
+    name: str = "context_management"
+    description: str = "Manage conversation context and memory optimization"
+    version: str = "1.0.0"
     
     @classmethod
     def get_supported_operations(cls) -> List[str]:

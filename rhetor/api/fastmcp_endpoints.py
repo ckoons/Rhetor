@@ -47,9 +47,9 @@ fastmcp_server = FastMCPServer(
 )
 
 # Register capabilities and tools
-fastmcp_server.register_capability(LLMManagementCapability)
-fastmcp_server.register_capability(PromptEngineeringCapability)
-fastmcp_server.register_capability(ContextManagementCapability)
+fastmcp_server.register_capability(LLMManagementCapability())
+fastmcp_server.register_capability(PromptEngineeringCapability())
+fastmcp_server.register_capability(ContextManagementCapability())
 
 # Register all tools
 for tool in llm_management_tools + prompt_engineering_tools + context_management_tools:

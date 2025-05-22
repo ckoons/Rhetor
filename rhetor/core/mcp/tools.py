@@ -1163,23 +1163,26 @@ llm_management_tools = [
         name="get_available_models",
         description="Get all available LLM models and providers",
         function=get_available_models,
-        parameters={}
+        input_schema={"parameters": {}, "return_type": {"type": "object"}}
     ),
     MCPTool(
         name="set_default_model", 
         description="Set the default model for LLM operations",
         function=set_default_model,
-        parameters={
-            "provider_id": {"type": "string", "description": "ID of the provider"},
-            "model_id": {"type": "string", "description": "ID of the model"}
+        input_schema={
+            "parameters": {
+                "provider_id": {"type": "string", "description": "ID of the provider"},
+                "model_id": {"type": "string", "description": "ID of the model"}
+            },
+            "return_type": {"type": "object"}
         }
     ),
     MCPTool(
         name="get_model_capabilities",
         description="Get capabilities and specifications for a specific model",
         function=get_model_capabilities,
-        parameters={
-            "provider_id": {"type": "string", "description": "ID of the provider"},
+        input_schema={"parameters": {
+            "provider_id": {"type": "string", "description": "ID of the provider"}, "return_type": {"type": "object"}},
             "model_id": {"type": "string", "description": "ID of the model"}
         }
     ),
@@ -1187,8 +1190,8 @@ llm_management_tools = [
         name="test_model_connection",
         description="Test connection to a specific model",
         function=test_model_connection,
-        parameters={
-            "provider_id": {"type": "string", "description": "ID of the provider"},
+        input_schema={"parameters": {
+            "provider_id": {"type": "string", "description": "ID of the provider"}, "return_type": {"type": "object"}},
             "model_id": {"type": "string", "description": "ID of the model"}
         }
     ),
@@ -1196,8 +1199,8 @@ llm_management_tools = [
         name="get_model_performance",
         description="Get performance metrics for a specific model",
         function=get_model_performance,
-        parameters={
-            "provider_id": {"type": "string", "description": "ID of the provider"},
+        input_schema={"parameters": {
+            "provider_id": {"type": "string", "description": "ID of the provider"}, "return_type": {"type": "object"}},
             "model_id": {"type": "string", "description": "ID of the model"},
             "task_type": {"type": "string", "description": "Type of task to evaluate", "default": "general"},
             "test_prompts": {"type": "array", "description": "Optional list of prompts to test with", "required": False}
@@ -1207,8 +1210,8 @@ llm_management_tools = [
         name="manage_model_rotation",
         description="Manage automatic model rotation for load balancing",
         function=manage_model_rotation,
-        parameters={
-            "rotation_strategy": {"type": "string", "description": "Strategy for model rotation", "default": "round_robin"},
+        input_schema={"parameters": {
+            "rotation_strategy": {"type": "string", "description": "Strategy for model rotation", "default": "round_robin"}, "return_type": {"type": "object"}},
             "models": {"type": "array", "description": "List of models to rotate between", "required": False},
             "criteria": {"type": "object", "description": "Criteria for rotation decisions", "required": False}
         }
@@ -1221,8 +1224,8 @@ prompt_engineering_tools = [
         name="create_prompt_template",
         description="Create a new prompt template",
         function=create_prompt_template,
-        parameters={
-            "name": {"type": "string", "description": "Name of the template"},
+        input_schema={"parameters": {
+            "name": {"type": "string", "description": "Name of the template"}, "return_type": {"type": "object"}},
             "template": {"type": "string", "description": "Template content with variable placeholders"},
             "variables": {"type": "array", "description": "List of variables used in the template"},
             "description": {"type": "string", "description": "Optional description", "required": False},
@@ -1233,8 +1236,8 @@ prompt_engineering_tools = [
         name="optimize_prompt",
         description="Optimize a prompt for better performance",
         function=optimize_prompt,
-        parameters={
-            "template_id": {"type": "string", "description": "ID of the template to optimize"},
+        input_schema={"parameters": {
+            "template_id": {"type": "string", "description": "ID of the template to optimize"}, "return_type": {"type": "object"}},
             "optimization_goals": {"type": "array", "description": "Goals for optimization", "required": False},
             "context": {"type": "object", "description": "Context information for optimization", "required": False}
         }
@@ -1243,8 +1246,8 @@ prompt_engineering_tools = [
         name="validate_prompt_syntax",
         description="Validate prompt syntax and structure",
         function=validate_prompt_syntax,
-        parameters={
-            "prompt_text": {"type": "string", "description": "The prompt text to validate"},
+        input_schema={"parameters": {
+            "prompt_text": {"type": "string", "description": "The prompt text to validate"}, "return_type": {"type": "object"}},
             "template_variables": {"type": "array", "description": "Expected template variables", "required": False}
         }
     ),
@@ -1252,8 +1255,8 @@ prompt_engineering_tools = [
         name="get_prompt_history",
         description="Get prompt usage history",
         function=get_prompt_history,
-        parameters={
-            "template_id": {"type": "string", "description": "Filter by specific template", "required": False},
+        input_schema={"parameters": {
+            "template_id": {"type": "string", "description": "Filter by specific template", "required": False}, "return_type": {"type": "object"}},
             "user_id": {"type": "string", "description": "Filter by specific user", "required": False},
             "limit": {"type": "integer", "description": "Maximum number of results", "default": 10}
         }
@@ -1262,8 +1265,8 @@ prompt_engineering_tools = [
         name="analyze_prompt_performance",
         description="Analyze prompt performance across different contexts",
         function=analyze_prompt_performance,
-        parameters={
-            "prompt_text": {"type": "string", "description": "The prompt to analyze"},
+        input_schema={"parameters": {
+            "prompt_text": {"type": "string", "description": "The prompt to analyze"}, "return_type": {"type": "object"}},
             "test_contexts": {"type": "array", "description": "List of contexts to test against"},
             "metrics_to_analyze": {"type": "array", "description": "Specific metrics to focus on", "required": False}
         }
@@ -1272,8 +1275,8 @@ prompt_engineering_tools = [
         name="manage_prompt_library",
         description="Manage the prompt template library",
         function=manage_prompt_library,
-        parameters={
-            "action": {"type": "string", "description": "Action to perform (list, search, categorize, delete)"},
+        input_schema={"parameters": {
+            "action": {"type": "string", "description": "Action to perform (list, search, categorize, delete)"}, "return_type": {"type": "object"}},
             "template_id": {"type": "string", "description": "Specific template ID for operations", "required": False},
             "category": {"type": "string", "description": "Category for filtering or categorization", "required": False},
             "search_term": {"type": "string", "description": "Search term for finding templates", "required": False}
@@ -1287,8 +1290,8 @@ context_management_tools = [
         name="analyze_context_usage",
         description="Analyze context usage patterns and efficiency",
         function=analyze_context_usage,
-        parameters={
-            "context_id": {"type": "string", "description": "ID of the context to analyze"},
+        input_schema={"parameters": {
+            "context_id": {"type": "string", "description": "ID of the context to analyze"}, "return_type": {"type": "object"}},
             "time_period": {"type": "string", "description": "Time period for analysis", "default": "last_week"},
             "include_metrics": {"type": "boolean", "description": "Whether to include detailed metrics", "default": True}
         }
@@ -1297,8 +1300,8 @@ context_management_tools = [
         name="optimize_context_window",
         description="Optimize the context window for better performance",
         function=optimize_context_window,
-        parameters={
-            "context_id": {"type": "string", "description": "ID of the context to optimize"},
+        input_schema={"parameters": {
+            "context_id": {"type": "string", "description": "ID of the context to optimize"}, "return_type": {"type": "object"}},
             "optimization_strategy": {"type": "string", "description": "Strategy for optimization", "default": "efficiency"},
             "preserve_recent_messages": {"type": "boolean", "description": "Whether to preserve recent messages", "default": True}
         }
@@ -1307,8 +1310,8 @@ context_management_tools = [
         name="track_context_history",
         description="Track and analyze context history patterns",
         function=track_context_history,
-        parameters={
-            "context_id": {"type": "string", "description": "ID of the context to track"},
+        input_schema={"parameters": {
+            "context_id": {"type": "string", "description": "ID of the context to track"}, "return_type": {"type": "object"}},
             "analysis_depth": {"type": "string", "description": "Depth of analysis", "default": "standard"},
             "include_token_counts": {"type": "boolean", "description": "Whether to include token count information", "default": True}
         }
@@ -1317,8 +1320,8 @@ context_management_tools = [
         name="compress_context",
         description="Compress context to reduce token usage while preserving important information",
         function=compress_context,
-        parameters={
-            "context_id": {"type": "string", "description": "ID of the context to compress"},
+        input_schema={"parameters": {
+            "context_id": {"type": "string", "description": "ID of the context to compress"}, "return_type": {"type": "object"}},
             "compression_ratio": {"type": "number", "description": "Target compression ratio (0.0 to 1.0)", "default": 0.7},
             "preserve_key_information": {"type": "boolean", "description": "Whether to preserve key information", "default": True}
         }
