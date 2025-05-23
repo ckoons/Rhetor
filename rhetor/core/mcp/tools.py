@@ -1158,6 +1158,10 @@ async def compress_context(
 # ============================================================================
 
 # LLM Management Tools
+# Note: Tools are automatically registered by @mcp_tool decorator
+# No need to manually create MCPTool objects
+llm_management_tools = []
+"""
 llm_management_tools = [
     MCPTool(
         name="get_available_models",
@@ -1217,8 +1221,11 @@ llm_management_tools = [
         }
     )
 ]
+"""
 
 # Prompt Engineering Tools
+prompt_engineering_tools = []
+"""
 prompt_engineering_tools = [
     MCPTool(
         name="create_prompt_template",
@@ -1283,8 +1290,11 @@ prompt_engineering_tools = [
         }
     )
 ]
+"""
 
-# Context Management Tools
+# Context Management Tools  
+context_management_tools = []
+"""
 context_management_tools = [
     MCPTool(
         name="analyze_context_usage",
@@ -1327,6 +1337,7 @@ context_management_tools = [
         }
     )
 ]
+"""
 
 
 __all__ = [
