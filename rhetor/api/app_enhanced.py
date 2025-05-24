@@ -17,13 +17,17 @@ from pydantic import BaseModel, Field
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rhetor.api.enhanced")
 
-# Add shared utils to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../shared/utils'))
+# Add shared utils to path - correct path to shared/utils from Rhetor/rhetor/api
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../shared/utils')))
 try:
     from graceful_shutdown import GracefulShutdown, add_fastapi_shutdown
-except ImportError:
-    logger.warning("Could not import graceful_shutdown, continuing without it")
+    from health_check import create_health_response
+    from hermes_registration import HermesRegistration, heartbeat_loop
+except ImportError as e:
+    logger.warning(f"Could not import shared utils: {e}")
     GracefulShutdown = None
+    create_health_response = None
+    HermesRegistration = None
 
 # Create FastAPI app
 app = FastAPI(
@@ -157,6 +161,9 @@ session: Optional[aiohttp.ClientSession] = None
 component_contexts: Dict[str, TektonContext] = {}
 performance_metrics: Dict[str, Dict[str, Any]] = {}
 shutdown_handler: Optional[GracefulShutdown] = None
+is_registered_with_hermes: bool = False
+hermes_registration: Optional[HermesRegistration] = None
+heartbeat_task = None
 
 async def get_session() -> aiohttp.ClientSession:
     """Get or create aiohttp session"""
@@ -189,7 +196,7 @@ async def save_contexts():
 @app.on_event("startup")
 async def startup_event():
     """Initialize providers on startup"""
-    global shutdown_handler
+    global shutdown_handler, is_registered_with_hermes, hermes_registration, heartbeat_task
     logger.info("Starting Rhetor Enhanced API")
     
     # Initialize graceful shutdown if available
@@ -201,11 +208,53 @@ async def startup_event():
         logger.info("Graceful shutdown configured")
     
     await initialize_providers()
+    
+    # Register with Hermes if available
+    if HermesRegistration:
+        hermes_registration = HermesRegistration()
+        is_registered_with_hermes = await hermes_registration.register_component(
+            component_name="rhetor",
+            port=8003,
+            version="0.2.0",
+            capabilities=[
+                "llm_orchestration",
+                "multi_provider_support",
+                "intelligent_routing",
+                "context_management",
+                "apollo_integration"
+            ],
+            metadata={
+                "providers": list(PROVIDERS.keys()),
+                "enhanced": True
+            }
+        )
+        
+        # Start heartbeat task if registered
+        if is_registered_with_hermes:
+            heartbeat_task = asyncio.create_task(
+                heartbeat_loop(hermes_registration, "rhetor", interval=30)
+            )
+            logger.info("Started Hermes heartbeat task")
+    
     logger.info("Rhetor Enhanced API started successfully")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
+    global heartbeat_task
+    
+    # Cancel heartbeat task
+    if heartbeat_task:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
+    
+    # Deregister from Hermes
+    if hermes_registration and is_registered_with_hermes:
+        await hermes_registration.deregister("rhetor")
+    
     if shutdown_handler and not shutdown_handler.is_shutting_down:
         await shutdown_handler.shutdown()
     else:
@@ -268,13 +317,36 @@ async def root():
 async def health():
     """Health check endpoint"""
     available_providers = {k: v["available"] for k, v in PROVIDERS.items()}
-    return {
-        "status": "healthy",
-        "version": "0.2.0",
-        "timestamp": datetime.now().isoformat(),
-        "providers": available_providers,
-        "active_contexts": len(component_contexts)
-    }
+    
+    # Use standardized health response if available
+    if create_health_response:
+        return create_health_response(
+            component_name="rhetor",
+            port=8003,
+            version="0.2.0",
+            status="healthy",
+            registered=is_registered_with_hermes,
+            details={
+                "providers": available_providers,
+                "active_contexts": len(component_contexts),
+                "performance_metrics": len(performance_metrics)
+            }
+        )
+    else:
+        # Fallback to manual format
+        return {
+            "status": "healthy",
+            "version": "0.2.0",
+            "timestamp": datetime.now().isoformat(),
+            "component": "rhetor",
+            "port": 8003,
+            "registered_with_hermes": is_registered_with_hermes,
+            "details": {
+                "providers": available_providers,
+                "active_contexts": len(component_contexts),
+                "performance_metrics": len(performance_metrics)
+            }
+        }
 
 @app.get("/providers")
 async def get_providers():
