@@ -53,7 +53,7 @@ sleep 2
 
 # Start the Rhetor service
 echo -e "${YELLOW}Starting Rhetor API server...${RESET}"
-python -m rhetor.api.app --port $RHETOR_PORT > "$HOME/.tekton/logs/rhetor.log" 2>&1 &
+python -m rhetor > "$HOME/.tekton/logs/rhetor.log" 2>&1 &
 RHETOR_PID=$!
 
 # Trap signals for graceful shutdown

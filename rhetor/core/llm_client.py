@@ -92,11 +92,21 @@ class LLMClient:
             "simulated": SimulatedProvider()
         }
         
-        # Initialize providers in parallel
-        initialization_tasks = [
-            provider.initialize() for provider in providers.values()
-        ]
-        await asyncio.gather(*initialization_tasks)
+        # Initialize providers in parallel with timeout
+        initialization_tasks = []
+        for name, provider in providers.items():
+            async def init_with_timeout(p, n):
+                try:
+                    await asyncio.wait_for(p.initialize(), timeout=5.0)
+                    logger.info(f"Provider {n} initialized successfully")
+                except asyncio.TimeoutError:
+                    logger.warning(f"Provider {n} initialization timed out")
+                except Exception as e:
+                    logger.warning(f"Provider {n} initialization failed: {e}")
+            
+            initialization_tasks.append(init_with_timeout(provider, name))
+        
+        await asyncio.gather(*initialization_tasks, return_exceptions=True)
         
         # Store the providers
         self.providers = providers

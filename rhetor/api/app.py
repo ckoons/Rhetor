@@ -149,28 +149,47 @@ async def startup_event():
     """Initialize components on startup"""
     global llm_client, model_router, context_manager, prompt_engine, template_manager, prompt_registry, budget_manager
     
-    # Initialize LLM client
-    llm_client = LLMClient()
-    await llm_client.initialize()
+    logger.info("Starting Rhetor initialization...")
     
-    # Initialize template manager
-    template_manager = TemplateManager()
+    try:
+        # Initialize LLM client with timeout
+        llm_client = LLMClient()
+        logger.info("Initializing LLM client...")
+        await asyncio.wait_for(llm_client.initialize(), timeout=10.0)
+        logger.info("LLM client initialized successfully")
     
-    # Initialize prompt registry and connect to template manager
-    prompt_registry = system_prompts.get_registry()
-    
-    # Initialize enhanced context manager with token counting
-    context_manager = ContextManager(llm_client=llm_client)
-    await context_manager.initialize()
-    
-    # Initialize budget manager for cost tracking and budget enforcement
-    budget_manager = BudgetManager()
+        # Initialize template manager
+        template_manager = TemplateManager()
+        logger.info("Template manager initialized")
+        
+        # Initialize prompt registry and connect to template manager
+        prompt_registry = system_prompts.get_registry()
+        logger.info("Prompt registry initialized")
+        
+        # Initialize enhanced context manager with token counting
+        context_manager = ContextManager(llm_client=llm_client)
+        logger.info("Initializing context manager...")
+        await asyncio.wait_for(context_manager.initialize(), timeout=5.0)
+        logger.info("Context manager initialized successfully")
+        
+        # Initialize budget manager for cost tracking and budget enforcement
+        budget_manager = BudgetManager()
+        logger.info("Budget manager initialized")
+        
+    except asyncio.TimeoutError:
+        logger.error("Timeout during Rhetor initialization")
+        raise
+    except Exception as e:
+        logger.error(f"Error during Rhetor startup: {e}")
+        raise
     
     # Initialize model router with budget manager
     model_router = ModelRouter(llm_client, budget_manager=budget_manager)
+    logger.info("Model router initialized")
     
     # Initialize prompt engine with template manager integration
     prompt_engine = PromptEngine(template_manager)
+    logger.info("Prompt engine initialized")
     
     logger.info("Rhetor API initialized with enhanced template, context, and budget management capabilities")
 
@@ -972,7 +991,7 @@ async def start_server(host="0.0.0.0", port=None, log_level="info"):
         log_level: Logging level
     """
     # Use standardized port configuration
-    from ..utils.port_config import get_rhetor_port
+    from tekton.utils.port_config import get_rhetor_port
     if port is None:
         port = get_rhetor_port()
     config = uvicorn.Config(
@@ -995,7 +1014,7 @@ def run_server(host="0.0.0.0", port=None, log_level="info"):
         log_level: Logging level
     """
     # Use standardized port configuration
-    from ..utils.port_config import get_rhetor_port
+    from tekton.utils.port_config import get_rhetor_port
     if port is None:
         port = get_rhetor_port()
     uvicorn.run(
@@ -1006,7 +1025,7 @@ def run_server(host="0.0.0.0", port=None, log_level="info"):
     )
 
 if __name__ == "__main__":
-    from ..utils.port_config import get_rhetor_port
+    from tekton.utils.port_config import get_rhetor_port
     port = get_rhetor_port()
     log_level = os.environ.get("RHETOR_LOG_LEVEL", "info")
     

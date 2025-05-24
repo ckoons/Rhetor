@@ -8,7 +8,7 @@ import logging
 import argparse
 
 from rhetor.api.app import run_server
-from rhetor.utils.port_config import get_rhetor_port
+from tekton.utils.port_config import get_rhetor_port
 
 # Configure logging
 logging.basicConfig(

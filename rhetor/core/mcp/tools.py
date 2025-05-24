@@ -8,13 +8,14 @@ prompt engineering, and context management functionality.
 import json
 import time
 from typing import Dict, Any, List, Optional
-from tekton.mcp.fastmcp.schema import MCPTool
+from tekton.mcp.fastmcp.decorators import mcp_tool
 
 
 # ============================================================================
 # LLM Management Tools
 # ============================================================================
 
+@mcp_tool
 async def get_available_models() -> Dict[str, Any]:
     """
     Get all available LLM models and providers.
@@ -64,6 +65,7 @@ async def get_available_models() -> Dict[str, Any]:
         }
 
 
+@mcp_tool
 async def set_default_model(provider_id: str, model_id: str) -> Dict[str, Any]:
     """
     Set the default model for LLM operations.
@@ -98,6 +100,7 @@ async def set_default_model(provider_id: str, model_id: str) -> Dict[str, Any]:
         }
 
 
+@mcp_tool
 async def get_model_capabilities(provider_id: str, model_id: str) -> Dict[str, Any]:
     """
     Get capabilities and specifications for a specific model.
@@ -163,6 +166,7 @@ async def get_model_capabilities(provider_id: str, model_id: str) -> Dict[str, A
         }
 
 
+@mcp_tool
 async def test_model_connection(provider_id: str, model_id: str) -> Dict[str, Any]:
     """
     Test connection to a specific model.
@@ -210,6 +214,7 @@ async def test_model_connection(provider_id: str, model_id: str) -> Dict[str, An
         }
 
 
+@mcp_tool
 async def get_model_performance(
     provider_id: str, 
     model_id: str, 
@@ -283,6 +288,7 @@ async def get_model_performance(
         }
 
 
+@mcp_tool
 async def manage_model_rotation(
     rotation_strategy: str = "round_robin",
     models: Optional[List[Dict[str, str]]] = None,
@@ -342,6 +348,7 @@ async def manage_model_rotation(
 # Prompt Engineering Tools  
 # ============================================================================
 
+@mcp_tool
 async def create_prompt_template(
     name: str,
     template: str,
@@ -395,6 +402,7 @@ async def create_prompt_template(
         }
 
 
+@mcp_tool
 async def optimize_prompt(
     template_id: str,
     optimization_goals: List[str] = None,
@@ -462,6 +470,7 @@ Context: {context}"""
         }
 
 
+@mcp_tool
 async def validate_prompt_syntax(
     prompt_text: str,
     template_variables: Optional[List[str]] = None
@@ -527,6 +536,7 @@ async def validate_prompt_syntax(
         }
 
 
+@mcp_tool
 async def get_prompt_history(
     template_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -579,6 +589,7 @@ async def get_prompt_history(
         }
 
 
+@mcp_tool
 async def analyze_prompt_performance(
     prompt_text: str,
     test_contexts: List[Dict[str, Any]],
@@ -643,6 +654,7 @@ async def analyze_prompt_performance(
         }
 
 
+@mcp_tool
 async def manage_prompt_library(
     action: str,
     template_id: Optional[str] = None,
@@ -772,6 +784,7 @@ async def manage_prompt_library(
 # Context Management Tools
 # ============================================================================
 
+@mcp_tool
 async def analyze_context_usage(
     context_id: str,
     time_period: str = "last_week",
@@ -859,6 +872,7 @@ async def analyze_context_usage(
         }
 
 
+@mcp_tool
 async def optimize_context_window(
     context_id: str,
     optimization_strategy: str = "efficiency",
@@ -946,6 +960,7 @@ async def optimize_context_window(
         }
 
 
+@mcp_tool
 async def track_context_history(
     context_id: str,
     analysis_depth: str = "standard",
@@ -1050,6 +1065,7 @@ async def track_context_history(
         }
 
 
+@mcp_tool
 async def compress_context(
     context_id: str,
     compression_ratio: float = 0.7,
@@ -1158,186 +1174,14 @@ async def compress_context(
 # ============================================================================
 
 # LLM Management Tools
-# Note: Tools are automatically registered by @mcp_tool decorator
-# No need to manually create MCPTool objects
+# Tools are automatically registered by @mcp_tool decorator
 llm_management_tools = []
-"""
-llm_management_tools = [
-    MCPTool(
-        name="get_available_models",
-        description="Get all available LLM models and providers",
-        function=get_available_models,
-        input_schema={"parameters": {}, "return_type": {"type": "object"}}
-    ),
-    MCPTool(
-        name="set_default_model", 
-        description="Set the default model for LLM operations",
-        function=set_default_model,
-        input_schema={
-            "parameters": {
-                "provider_id": {"type": "string", "description": "ID of the provider"},
-                "model_id": {"type": "string", "description": "ID of the model"}
-            },
-            "return_type": {"type": "object"}
-        }
-    ),
-    MCPTool(
-        name="get_model_capabilities",
-        description="Get capabilities and specifications for a specific model",
-        function=get_model_capabilities,
-        input_schema={"parameters": {
-            "provider_id": {"type": "string", "description": "ID of the provider"}, "return_type": {"type": "object"}},
-            "model_id": {"type": "string", "description": "ID of the model"}
-        }
-    ),
-    MCPTool(
-        name="test_model_connection",
-        description="Test connection to a specific model",
-        function=test_model_connection,
-        input_schema={"parameters": {
-            "provider_id": {"type": "string", "description": "ID of the provider"}, "return_type": {"type": "object"}},
-            "model_id": {"type": "string", "description": "ID of the model"}
-        }
-    ),
-    MCPTool(
-        name="get_model_performance",
-        description="Get performance metrics for a specific model",
-        function=get_model_performance,
-        input_schema={"parameters": {
-            "provider_id": {"type": "string", "description": "ID of the provider"}, "return_type": {"type": "object"}},
-            "model_id": {"type": "string", "description": "ID of the model"},
-            "task_type": {"type": "string", "description": "Type of task to evaluate", "default": "general"},
-            "test_prompts": {"type": "array", "description": "Optional list of prompts to test with", "required": False}
-        }
-    ),
-    MCPTool(
-        name="manage_model_rotation",
-        description="Manage automatic model rotation for load balancing",
-        function=manage_model_rotation,
-        input_schema={"parameters": {
-            "rotation_strategy": {"type": "string", "description": "Strategy for model rotation", "default": "round_robin"}, "return_type": {"type": "object"}},
-            "models": {"type": "array", "description": "List of models to rotate between", "required": False},
-            "criteria": {"type": "object", "description": "Criteria for rotation decisions", "required": False}
-        }
-    )
-]
-"""
 
 # Prompt Engineering Tools
 prompt_engineering_tools = []
-"""
-prompt_engineering_tools = [
-    MCPTool(
-        name="create_prompt_template",
-        description="Create a new prompt template",
-        function=create_prompt_template,
-        input_schema={"parameters": {
-            "name": {"type": "string", "description": "Name of the template"}, "return_type": {"type": "object"}},
-            "template": {"type": "string", "description": "Template content with variable placeholders"},
-            "variables": {"type": "array", "description": "List of variables used in the template"},
-            "description": {"type": "string", "description": "Optional description", "required": False},
-            "tags": {"type": "array", "description": "Optional tags for categorization", "required": False}
-        }
-    ),
-    MCPTool(
-        name="optimize_prompt",
-        description="Optimize a prompt for better performance",
-        function=optimize_prompt,
-        input_schema={"parameters": {
-            "template_id": {"type": "string", "description": "ID of the template to optimize"}, "return_type": {"type": "object"}},
-            "optimization_goals": {"type": "array", "description": "Goals for optimization", "required": False},
-            "context": {"type": "object", "description": "Context information for optimization", "required": False}
-        }
-    ),
-    MCPTool(
-        name="validate_prompt_syntax",
-        description="Validate prompt syntax and structure",
-        function=validate_prompt_syntax,
-        input_schema={"parameters": {
-            "prompt_text": {"type": "string", "description": "The prompt text to validate"}, "return_type": {"type": "object"}},
-            "template_variables": {"type": "array", "description": "Expected template variables", "required": False}
-        }
-    ),
-    MCPTool(
-        name="get_prompt_history",
-        description="Get prompt usage history",
-        function=get_prompt_history,
-        input_schema={"parameters": {
-            "template_id": {"type": "string", "description": "Filter by specific template", "required": False}, "return_type": {"type": "object"}},
-            "user_id": {"type": "string", "description": "Filter by specific user", "required": False},
-            "limit": {"type": "integer", "description": "Maximum number of results", "default": 10}
-        }
-    ),
-    MCPTool(
-        name="analyze_prompt_performance",
-        description="Analyze prompt performance across different contexts",
-        function=analyze_prompt_performance,
-        input_schema={"parameters": {
-            "prompt_text": {"type": "string", "description": "The prompt to analyze"}, "return_type": {"type": "object"}},
-            "test_contexts": {"type": "array", "description": "List of contexts to test against"},
-            "metrics_to_analyze": {"type": "array", "description": "Specific metrics to focus on", "required": False}
-        }
-    ),
-    MCPTool(
-        name="manage_prompt_library",
-        description="Manage the prompt template library",
-        function=manage_prompt_library,
-        input_schema={"parameters": {
-            "action": {"type": "string", "description": "Action to perform (list, search, categorize, delete)"}, "return_type": {"type": "object"}},
-            "template_id": {"type": "string", "description": "Specific template ID for operations", "required": False},
-            "category": {"type": "string", "description": "Category for filtering or categorization", "required": False},
-            "search_term": {"type": "string", "description": "Search term for finding templates", "required": False}
-        }
-    )
-]
-"""
 
 # Context Management Tools  
 context_management_tools = []
-"""
-context_management_tools = [
-    MCPTool(
-        name="analyze_context_usage",
-        description="Analyze context usage patterns and efficiency",
-        function=analyze_context_usage,
-        input_schema={"parameters": {
-            "context_id": {"type": "string", "description": "ID of the context to analyze"}, "return_type": {"type": "object"}},
-            "time_period": {"type": "string", "description": "Time period for analysis", "default": "last_week"},
-            "include_metrics": {"type": "boolean", "description": "Whether to include detailed metrics", "default": True}
-        }
-    ),
-    MCPTool(
-        name="optimize_context_window",
-        description="Optimize the context window for better performance",
-        function=optimize_context_window,
-        input_schema={"parameters": {
-            "context_id": {"type": "string", "description": "ID of the context to optimize"}, "return_type": {"type": "object"}},
-            "optimization_strategy": {"type": "string", "description": "Strategy for optimization", "default": "efficiency"},
-            "preserve_recent_messages": {"type": "boolean", "description": "Whether to preserve recent messages", "default": True}
-        }
-    ),
-    MCPTool(
-        name="track_context_history",
-        description="Track and analyze context history patterns",
-        function=track_context_history,
-        input_schema={"parameters": {
-            "context_id": {"type": "string", "description": "ID of the context to track"}, "return_type": {"type": "object"}},
-            "analysis_depth": {"type": "string", "description": "Depth of analysis", "default": "standard"},
-            "include_token_counts": {"type": "boolean", "description": "Whether to include token count information", "default": True}
-        }
-    ),
-    MCPTool(
-        name="compress_context",
-        description="Compress context to reduce token usage while preserving important information",
-        function=compress_context,
-        input_schema={"parameters": {
-            "context_id": {"type": "string", "description": "ID of the context to compress"}, "return_type": {"type": "object"}},
-            "compression_ratio": {"type": "number", "description": "Target compression ratio (0.0 to 1.0)", "default": 0.7},
-            "preserve_key_information": {"type": "boolean", "description": "Whether to preserve key information", "default": True}
-        }
-    )
-]
-"""
 
 
 __all__ = [
