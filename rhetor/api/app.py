@@ -191,6 +191,27 @@ async def startup_event():
     prompt_engine = PromptEngine(template_manager)
     logger.info("Prompt engine initialized")
     
+    # Register with Hermes
+    try:
+        from shared.utils.hermes_registration import HermesRegistration
+        from tekton.utils.port_config import get_rhetor_port
+        
+        hermes_reg = HermesRegistration()
+        reg_success = await hermes_reg.register_component(
+            component_name="rhetor",
+            port=get_rhetor_port(),
+            version="0.1.0",
+            capabilities=["llm_routing", "prompt_management", "context_management", "budget_tracking"],
+            metadata={"description": "LLM orchestration and routing"}
+        )
+        if reg_success:
+            logger.info("Successfully registered with Hermes")
+            app.state.hermes_registration = hermes_reg
+        else:
+            logger.warning("Failed to register with Hermes")
+    except Exception as e:
+        logger.warning(f"Could not register with Hermes: {e}")
+    
     logger.info("Rhetor API initialized with enhanced template, context, and budget management capabilities")
 
 @app.get("/")
