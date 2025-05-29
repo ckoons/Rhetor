@@ -49,14 +49,14 @@ class RhetorClient:
         """Initialize Rhetor client.
         
         Args:
-            rhetor_url: URL for Rhetor API (defaults to http://localhost:8300)
+            rhetor_url: URL for Rhetor API (defaults to http://localhost:8003)
             component_id: ID of the component using the client
             default_context: Default context ID for messages
             auto_reconnect: Whether to automatically attempt reconnection
             max_retries: Maximum number of retry attempts for operations
             retry_delay: Delay between retry attempts in seconds
         """
-        self.rhetor_url = rhetor_url or os.environ.get("RHETOR_URL", "http://localhost:8300")
+        self.rhetor_url = rhetor_url or os.environ.get("RHETOR_URL", "http://localhost:8003")
         self.component_id = component_id or os.environ.get("COMPONENT_ID", "component")
         self.default_context = default_context or f"{self.component_id}:default"
         self.auto_reconnect = auto_reconnect

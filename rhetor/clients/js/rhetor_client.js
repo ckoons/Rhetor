@@ -13,7 +13,7 @@ class RhetorClient {
    * Create a new Rhetor client
    * 
    * @param {Object} options - Configuration options
-   * @param {string} [options.rhetorUrl='http://localhost:8300'] - Base URL for Rhetor API
+   * @param {string} [options.rhetorUrl='http://localhost:8003'] - Base URL for Rhetor API
    * @param {string} [options.componentId='frontend'] - Component ID for tracking
    * @param {string} [options.defaultContext=null] - Default context ID to use
    * @param {boolean} [options.autoReconnect=true] - Whether to automatically reconnect WebSocket
@@ -21,8 +21,8 @@ class RhetorClient {
    * @param {number} [options.maxReconnectAttempts=10] - Maximum number of reconnection attempts
    */
   constructor(options = {}) {
-    this.rhetorUrl = options.rhetorUrl || 'http://localhost:8300';
-    this.wsUrl = options.rhetorUrl?.replace(/^http/, 'ws') || 'ws://localhost:8300';
+    this.rhetorUrl = options.rhetorUrl || 'http://localhost:8003';
+    this.wsUrl = options.rhetorUrl?.replace(/^http/, 'ws') || 'ws://localhost:8003';
     this.componentId = options.componentId || 'frontend';
     this.defaultContext = options.defaultContext || `${this.componentId}:default`;
     this.autoReconnect = options.autoReconnect !== false;

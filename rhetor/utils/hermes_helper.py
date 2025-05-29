@@ -12,7 +12,7 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 HERMES_API_URL = os.environ.get("HERMES_API_URL", "http://localhost:8100")
-RHETOR_PORT = int(os.environ.get("RHETOR_PORT", 8300))
+RHETOR_PORT = int(os.environ.get("RHETOR_PORT", 8003))
 
 # Check if this is running in the Tekton environment
 TEKTON_DIR = Path(__file__).parent.parent.parent.parent
