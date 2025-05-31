@@ -41,11 +41,16 @@ class BudgetManager:
     def __init__(self, db_path: Optional[str] = None):
         """
         Initialize the budget manager.
-        
+
         Args:
-            db_path: Path to the SQLite database file. Defaults to ~/.tekton/data/rhetor/budget.db
+            db_path: Path to the SQLite database file. Defaults to Rhetor component directory
         """
-        self.db_path = db_path or os.path.expanduser("~/.tekton/data/rhetor/budget.db")
+        if db_path:
+            self.db_path = db_path
+        else:
+            # Store in Rhetor component directory
+            rhetor_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+            self.db_path = os.path.join(rhetor_dir, "rhetor.db")
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
         # Model pricing for various providers in USD
