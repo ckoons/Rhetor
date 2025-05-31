@@ -19,7 +19,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("rhetor.test")
 
-RHETOR_URL = os.environ.get("RHETOR_URL", "http://localhost:8300")
+RHETOR_URL = os.environ.get("RHETOR_URL", "http://localhost:8003")
 
 async def test_providers():
     """Test retrieving available providers."""
