@@ -15,8 +15,8 @@ HERMES_API_URL = os.environ.get("HERMES_API_URL", "http://localhost:8100")
 RHETOR_PORT = int(os.environ.get("RHETOR_PORT", 8003))
 
 # Check if this is running in the Tekton environment
-TEKTON_DIR = Path(__file__).parent.parent.parent.parent
-IS_TEKTON_ENV = TEKTON_DIR.name == "Tekton" and (TEKTON_DIR / "Hermes").exists()
+TEKTON_ROOT = Path(__file__).parent.parent.parent.parent
+IS_TEKTON_ENV = TEKTON_ROOT.name == "Tekton" and (TEKTON_ROOT / "Hermes").exists()
 
 async def register_with_hermes():
     """
@@ -84,7 +84,7 @@ async def register_with_hermes():
                     
                     # Also save registration to the Hermes registrations directory if in Tekton environment
                     if IS_TEKTON_ENV:
-                        registrations_dir = TEKTON_DIR / "Hermes" / "registrations"
+                        registrations_dir = TEKTON_ROOT / "Hermes" / "registrations"
                         if registrations_dir.exists():
                             with open(registrations_dir / "rhetor.json", "w") as f:
                                 json.dump(registration_data, f, indent=2)
