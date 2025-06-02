@@ -26,7 +26,6 @@ fi
 cd "$SCRIPT_DIR"
 
 # Set environment variables
-export RHETOR_PORT=8003
 export PYTHONPATH="$SCRIPT_DIR:$TEKTON_ROOT:$PYTHONPATH"
 
 # Create necessary directories
