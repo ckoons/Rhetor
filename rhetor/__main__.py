@@ -7,24 +7,30 @@ import sys
 import logging
 import argparse
 
-from rhetor.api.app import run_server
-from tekton.utils.port_config import get_rhetor_port
+# Add Tekton root to path if not already present
+tekton_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if tekton_root not in sys.path:
+    sys.path.insert(0, tekton_root)
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("rhetor")
+from rhetor.api.app import run_server
+from shared.utils.env_config import get_component_config
+from shared.utils.logging_setup import setup_component_logging
+
+# Set up logging
+logger = setup_component_logging("rhetor")
 
 def main():
     """Run the Rhetor API server."""
+    # Get port configuration
+    config = get_component_config()
+    default_port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT", 8003))
+    
     parser = argparse.ArgumentParser(description="Rhetor LLM Manager")
     parser.add_argument(
         "--port", "-p", 
         type=int, 
-        default=get_rhetor_port(),
-        help="Port to run the server on (default: 8003)"
+        default=default_port,
+        help=f"Port to run the server on (default: {default_port})"
     )
     parser.add_argument(
         "--host", 

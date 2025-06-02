@@ -7,11 +7,11 @@ and prompt engineering capabilities.
 
 import os
 import sys
-import logging
 import asyncio
 import json
 from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
+from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, Query, Path
@@ -19,6 +19,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, Field
+
+# Add Tekton root to path if not already present
+tekton_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+if tekton_root not in sys.path:
+    sys.path.insert(0, tekton_root)
+
+# Import shared utilities
+from shared.utils.hermes_registration import HermesRegistration, heartbeat_loop
+from shared.utils.logging_setup import setup_component_logging
+from shared.utils.env_config import get_component_config
+from shared.utils.errors import StartupError
+from shared.utils.startup import component_startup, StartupMetrics
+from shared.utils.shutdown import GracefulShutdown
 
 from ..core.llm_client import LLMClient
 from ..core.model_router import ModelRouter
@@ -29,15 +42,127 @@ from ..core.prompt_registry import PromptRegistry
 from ..core.budget_manager import BudgetManager, BudgetPolicy, BudgetPeriod
 from ..templates import system_prompts
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("rhetor.api")
+# Set up logging
+logger = setup_component_logging("rhetor")
+
+# Initialize core components (will be set in lifespan)
+llm_client = None
+model_router = None
+context_manager = None
+prompt_engine = None
+template_manager = None
+prompt_registry = None
+budget_manager = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for Rhetor"""
+    global llm_client, model_router, context_manager, prompt_engine, template_manager, prompt_registry, budget_manager
+    
+    # Startup
+    logger.info("Starting Rhetor initialization...")
+    
+    # Get configuration
+    config = get_component_config()
+    port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT", 8003))
+    
+    try:
+        # Initialize LLM client with timeout
+        llm_client = LLMClient()
+        logger.info("Initializing LLM client...")
+        await asyncio.wait_for(llm_client.initialize(), timeout=10.0)
+        logger.info("LLM client initialized successfully")
+    
+        # Initialize template manager
+        template_manager = TemplateManager()
+        logger.info("Template manager initialized")
+        
+        # Initialize prompt registry and connect to template manager
+        prompt_registry = system_prompts.get_registry()
+        logger.info("Prompt registry initialized")
+        
+        # Initialize enhanced context manager with token counting
+        context_manager = ContextManager(llm_client=llm_client)
+        logger.info("Initializing context manager...")
+        await asyncio.wait_for(context_manager.initialize(), timeout=5.0)
+        logger.info("Context manager initialized successfully")
+        
+        # Initialize budget manager for cost tracking and budget enforcement
+        budget_manager = BudgetManager()
+        logger.info("Budget manager initialized")
+        
+    except asyncio.TimeoutError:
+        logger.error("Timeout during Rhetor initialization")
+        raise StartupError("Timeout during Rhetor initialization")
+    except Exception as e:
+        logger.error(f"Error during Rhetor startup: {e}")
+        raise StartupError(f"Error during Rhetor startup: {e}")
+    
+    # Initialize model router with budget manager
+    model_router = ModelRouter(llm_client, budget_manager=budget_manager)
+    logger.info("Model router initialized")
+    
+    # Initialize prompt engine with template manager integration
+    prompt_engine = PromptEngine(template_manager)
+    logger.info("Prompt engine initialized")
+    
+    # Register with Hermes
+    hermes_registration = HermesRegistration()
+    await hermes_registration.register_component(
+        component_name="rhetor",
+        port=port,
+        version="1.0.0",
+        capabilities=["llm_routing", "prompt_management", "context_management", "budget_tracking"],
+        metadata={
+            "description": "LLM orchestration and management",
+            "category": "ai"
+        }
+    )
+    app.state.hermes_registration = hermes_registration
+    
+    # Start heartbeat task
+    if hermes_registration.is_registered:
+        heartbeat_task = asyncio.create_task(heartbeat_loop(hermes_registration, "rhetor"))
+    
+    logger.info(f"Rhetor API initialized successfully on port {port}")
+    
+    yield
+    
+    # Shutdown
+    logger.info("Shutting down Rhetor...")
+    
+    # Cancel heartbeat task if running
+    if hermes_registration.is_registered and 'heartbeat_task' in locals():
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
+    
+    # Cleanup components
+    if context_manager:
+        await context_manager.cleanup()
+    
+    if llm_client:
+        await llm_client.cleanup()
+    
+    # Deregister from Hermes
+    if hasattr(app.state, "hermes_registration") and app.state.hermes_registration:
+        await app.state.hermes_registration.deregister("rhetor")
+    
+    # Give sockets time to close on macOS
+    await asyncio.sleep(0.5)
+    
+    logger.info("Rhetor shutdown complete")
+
 
 # Initialize FastAPI app
-app = FastAPI(title="Rhetor LLM Manager", version="1.0.0")
+app = FastAPI(
+    title="Rhetor LLM Manager", 
+    version="1.0.0",
+    lifespan=lifespan
+)
 
 # Add FastMCP endpoints
 try:
@@ -56,14 +181,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize core components (will be set in startup event)
-llm_client = None
-model_router = None
-context_manager = None
-prompt_engine = None
-template_manager = None
-prompt_registry = None
-budget_manager = None
 
 # Request models
 class MessageRequest(BaseModel):
@@ -144,76 +261,6 @@ class BudgetPolicyRequest(BaseModel):
     policy: str  # ignore, warn, enforce
     provider: str = "all"
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize components on startup"""
-    global llm_client, model_router, context_manager, prompt_engine, template_manager, prompt_registry, budget_manager
-    
-    logger.info("Starting Rhetor initialization...")
-    
-    try:
-        # Initialize LLM client with timeout
-        llm_client = LLMClient()
-        logger.info("Initializing LLM client...")
-        await asyncio.wait_for(llm_client.initialize(), timeout=10.0)
-        logger.info("LLM client initialized successfully")
-    
-        # Initialize template manager
-        template_manager = TemplateManager()
-        logger.info("Template manager initialized")
-        
-        # Initialize prompt registry and connect to template manager
-        prompt_registry = system_prompts.get_registry()
-        logger.info("Prompt registry initialized")
-        
-        # Initialize enhanced context manager with token counting
-        context_manager = ContextManager(llm_client=llm_client)
-        logger.info("Initializing context manager...")
-        await asyncio.wait_for(context_manager.initialize(), timeout=5.0)
-        logger.info("Context manager initialized successfully")
-        
-        # Initialize budget manager for cost tracking and budget enforcement
-        budget_manager = BudgetManager()
-        logger.info("Budget manager initialized")
-        
-    except asyncio.TimeoutError:
-        logger.error("Timeout during Rhetor initialization")
-        raise
-    except Exception as e:
-        logger.error(f"Error during Rhetor startup: {e}")
-        raise
-    
-    # Initialize model router with budget manager
-    model_router = ModelRouter(llm_client, budget_manager=budget_manager)
-    logger.info("Model router initialized")
-    
-    # Initialize prompt engine with template manager integration
-    prompt_engine = PromptEngine(template_manager)
-    logger.info("Prompt engine initialized")
-    
-    # Register with Hermes
-    try:
-        from shared.utils.hermes_registration import HermesRegistration
-        from tekton.utils.port_config import get_rhetor_port
-        
-        hermes_reg = HermesRegistration()
-        reg_success = await hermes_reg.register_component(
-            component_name="rhetor",
-            port=get_rhetor_port(),
-            version="0.1.0",
-            capabilities=["llm_routing", "prompt_management", "context_management", "budget_tracking"],
-            metadata={"description": "LLM orchestration and routing"}
-        )
-        if reg_success:
-            logger.info("Successfully registered with Hermes")
-            app.state.hermes_registration = hermes_reg
-        else:
-            logger.warning("Failed to register with Hermes")
-    except Exception as e:
-        logger.warning(f"Could not register with Hermes: {e}")
-    
-    logger.info("Rhetor API initialized with enhanced template, context, and budget management capabilities")
-
 @app.get("/")
 async def root():
     """Root endpoint - provides basic information"""
@@ -268,16 +315,23 @@ async def root():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint"""
+    """Health check endpoint following Tekton standards"""
     provider_status = {}
     if llm_client:
         providers = llm_client.get_all_providers()
         for provider_id, provider_info in providers.items():
             provider_status[provider_id] = provider_info["available"]
     
+    # Get port from config
+    config = get_component_config()
+    port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT", 8003))
+    
     return {
         "status": "healthy",
-        "version": "0.1.0",
+        "component": "rhetor",
+        "version": "1.0.0",
+        "port": port,
+        "message": "Rhetor is running normally",
         "providers": provider_status
     }
 
@@ -1002,56 +1056,6 @@ async def websocket_endpoint(websocket: WebSocket):
         except:
             pass
 
-async def start_server(host="0.0.0.0", port=None, log_level="info"):
-    """
-    Start the Rhetor API server.
-    
-    Args:
-        host: Host to bind to
-        port: Port to bind to
-        log_level: Logging level
-    """
-    # Use standardized port configuration
-    from tekton.utils.port_config import get_rhetor_port
-    if port is None:
-        port = get_rhetor_port()
-    config = uvicorn.Config(
-        "rhetor.api.app:app",
-        host=host,
-        port=port,
-        log_level=log_level,
-        reload=False
-    )
-    server = uvicorn.Server(config)
-    await server.serve()
-
-def run_server(host="0.0.0.0", port=None, log_level="info"):
-    """
-    Run the Rhetor API server.
-    
-    Args:
-        host: Host to bind to
-        port: Port to bind to
-        log_level: Logging level
-    """
-    # Use standardized port configuration
-    from tekton.utils.port_config import get_rhetor_port
-    if port is None:
-        port = get_rhetor_port()
-    uvicorn.run(
-        app,
-        host=host,
-        port=port,
-        log_level=log_level
-    )
-
-if __name__ == "__main__":
-    from tekton.utils.port_config import get_rhetor_port
-    port = get_rhetor_port()
-    log_level = os.environ.get("RHETOR_LOG_LEVEL", "info")
-    
-    logger.info(f"Starting Rhetor API server on port {port}")
-    run_server(port=port, log_level=log_level)
 
 # Template management endpoints
 @app.get("/templates")
@@ -1629,3 +1633,30 @@ async def get_model_tiers():
     except Exception as e:
         logger.error(f"Error getting model tiers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+def run_server(host="0.0.0.0", port=None, log_level="info"):
+    """
+    Run the Rhetor API server.
+    
+    Args:
+        host: Host to bind to
+        port: Port to bind to
+        log_level: Logging level
+    """
+    # Get port configuration
+    if port is None:
+        config = get_component_config()
+        port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT", 8003))
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level=log_level
+    )
+
+
+if __name__ == "__main__":
+    run_server()
