@@ -1653,12 +1653,18 @@ def run_server(host="0.0.0.0", port=None, log_level="info"):
     # Get port configuration
     if port is None:
         config = get_component_config()
-        port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT", 8003))
-    uvicorn.run(
-        app,
+        port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT"))
+    
+    # Use socket reuse for quick port reuse
+    from shared.utils.socket_server import run_with_socket_reuse
+    run_with_socket_reuse(
+        "rhetor.api.app:app",
         host=host,
         port=port,
-        log_level=log_level
+        log_level=log_level,
+        timeout_graceful_shutdown=3,
+        server_header=False,
+        access_log=False
     )
 
 
