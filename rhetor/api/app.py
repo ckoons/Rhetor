@@ -33,7 +33,6 @@ from shared.utils.env_config import get_component_config
 from shared.utils.errors import StartupError
 from shared.utils.startup import component_startup, StartupMetrics
 from shared.utils.shutdown import GracefulShutdown
-from shared.utils.shutdown_endpoint import add_shutdown_endpoint_to_app
 
 from ..core.llm_client import LLMClient
 from ..core.model_router import ModelRouter
@@ -1638,14 +1637,6 @@ async def get_model_tiers():
 
 
 # Add shutdown endpoint using shared utility
-add_shutdown_endpoint_to_app(
-    app,
-    "rhetor",
-    cleanup_tasks=[
-        lambda: context_manager.cleanup() if context_manager else None,
-        lambda: llm_client.cleanup() if llm_client else None
-    ]
-)
 
 
 

@@ -23,7 +23,7 @@ def main():
     """Run the Rhetor API server."""
     # Get port configuration
     config = get_component_config()
-    default_port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT", 8003))
+    default_port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT"))
     
     parser = argparse.ArgumentParser(description="Rhetor LLM Manager")
     parser.add_argument(
