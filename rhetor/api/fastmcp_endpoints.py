@@ -7,7 +7,7 @@ allowing external systems to interact with Rhetor LLM management and prompt engi
 
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from tekton.models import TektonBaseModel
 import asyncio
 
 from tekton.mcp.fastmcp.server import FastMCPServer
@@ -26,13 +26,13 @@ from rhetor.core.mcp.capabilities import (
 )
 
 
-class MCPRequest(BaseModel):
+class MCPRequest(TektonBaseModel):
     """Request model for MCP tool execution."""
     tool_name: str
     arguments: Dict[str, Any]
 
 
-class MCPResponse(BaseModel):
+class MCPResponse(TektonBaseModel):
     """Response model for MCP tool execution."""
     success: bool
     result: Optional[Dict[str, Any]] = None

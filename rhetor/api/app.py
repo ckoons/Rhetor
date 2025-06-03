@@ -18,7 +18,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Back
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
-from pydantic import BaseModel, Field
+from pydantic import Field
+from tekton.models import TektonBaseModel
 
 # Add Tekton root to path if not already present
 tekton_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
@@ -32,6 +33,7 @@ from shared.utils.env_config import get_component_config
 from shared.utils.errors import StartupError
 from shared.utils.startup import component_startup, StartupMetrics
 from shared.utils.shutdown import GracefulShutdown
+from shared.utils.shutdown_endpoint import add_shutdown_endpoint_to_app
 
 from ..core.llm_client import LLMClient
 from ..core.model_router import ModelRouter
@@ -183,7 +185,7 @@ app.add_middleware(
 
 
 # Request models
-class MessageRequest(BaseModel):
+class MessageRequest(TektonBaseModel):
     message: str
     context_id: str = "default"
     task_type: str = "default"
@@ -192,7 +194,7 @@ class MessageRequest(BaseModel):
     options: Optional[Dict[str, Any]] = None
     prompt_id: Optional[str] = None
 
-class StreamRequest(BaseModel):
+class StreamRequest(TektonBaseModel):
     message: str
     context_id: str = "default"
     task_type: str = "default"
@@ -200,7 +202,7 @@ class StreamRequest(BaseModel):
     options: Optional[Dict[str, Any]] = None
     prompt_id: Optional[str] = None
 
-class ChatRequest(BaseModel):
+class ChatRequest(TektonBaseModel):
     messages: List[Dict[str, str]]
     context_id: str = "default"
     task_type: str = "default"
@@ -209,12 +211,12 @@ class ChatRequest(BaseModel):
     options: Optional[Dict[str, Any]] = None
     prompt_id: Optional[str] = None
 
-class ProviderModelRequest(BaseModel):
+class ProviderModelRequest(TektonBaseModel):
     provider_id: str
     model_id: str
 
 # Template and prompt management models
-class TemplateCreateRequest(BaseModel):
+class TemplateCreateRequest(TektonBaseModel):
     name: str
     content: str
     category: str = "general"
@@ -222,16 +224,16 @@ class TemplateCreateRequest(BaseModel):
     tags: Optional[List[str]] = None
     metadata: Optional[Dict[str, Any]] = None
 
-class TemplateUpdateRequest(BaseModel):
+class TemplateUpdateRequest(TektonBaseModel):
     content: str
     metadata: Optional[Dict[str, Any]] = None
 
-class TemplateRenderRequest(BaseModel):
+class TemplateRenderRequest(TektonBaseModel):
     template_id: str
     variables: Dict[str, Any]
     version_id: Optional[str] = None
 
-class PromptCreateRequest(BaseModel):
+class PromptCreateRequest(TektonBaseModel):
     name: str
     component: str
     content: str
@@ -241,22 +243,22 @@ class PromptCreateRequest(BaseModel):
     parent_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
-class PromptUpdateRequest(BaseModel):
+class PromptUpdateRequest(TektonBaseModel):
     content: str
     metadata: Optional[Dict[str, Any]] = None
 
-class PromptCompareRequest(BaseModel):
+class PromptCompareRequest(TektonBaseModel):
     prompt_id1: str
     prompt_id2: str
     
 # Budget management models
-class BudgetLimitRequest(BaseModel):
+class BudgetLimitRequest(TektonBaseModel):
     period: str  # daily, weekly, monthly
     limit_amount: float
     provider: str = "all"
     enforcement: Optional[str] = None  # ignore, warn, enforce
     
-class BudgetPolicyRequest(BaseModel):
+class BudgetPolicyRequest(TektonBaseModel):
     period: str  # daily, weekly, monthly
     policy: str  # ignore, warn, enforce
     provider: str = "all"
@@ -1633,6 +1635,17 @@ async def get_model_tiers():
     except Exception as e:
         logger.error(f"Error getting model tiers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Add shutdown endpoint using shared utility
+add_shutdown_endpoint_to_app(
+    app,
+    "rhetor",
+    cleanup_tasks=[
+        lambda: context_manager.cleanup() if context_manager else None,
+        lambda: llm_client.cleanup() if llm_client else None
+    ]
+)
 
 
 
