@@ -33,6 +33,15 @@ from shared.utils.env_config import get_component_config
 from shared.utils.errors import StartupError
 from shared.utils.startup import component_startup, StartupMetrics
 from shared.utils.shutdown import GracefulShutdown
+from shared.utils.health_check import create_health_response
+from shared.api import (
+    create_standard_routers,
+    mount_standard_routers,
+    create_ready_endpoint,
+    create_discovery_endpoint,
+    get_openapi_configuration,
+    EndpointInfo
+)
 
 from ..core.llm_client import LLMClient
 from ..core.model_router import ModelRouter
@@ -46,6 +55,11 @@ from ..templates import system_prompts
 # Set up logging
 logger = setup_component_logging("rhetor")
 
+# Component configuration
+COMPONENT_NAME = "Rhetor"
+COMPONENT_VERSION = "0.1.0"
+COMPONENT_DESCRIPTION = "LLM orchestration and management service"
+
 # Initialize core components (will be set in lifespan)
 llm_client = None
 model_router = None
@@ -54,12 +68,18 @@ prompt_engine = None
 template_manager = None
 prompt_registry = None
 budget_manager = None
+start_time = None
+is_registered_with_hermes = False
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for Rhetor"""
-    global llm_client, model_router, context_manager, prompt_engine, template_manager, prompt_registry, budget_manager
+    global llm_client, model_router, context_manager, prompt_engine, template_manager, prompt_registry, budget_manager, start_time, is_registered_with_hermes
+    
+    # Track startup time
+    import time
+    start_time = time.time()
     
     # Startup
     logger.info("Starting Rhetor initialization...")
@@ -110,10 +130,10 @@ async def lifespan(app: FastAPI):
     
     # Register with Hermes
     hermes_registration = HermesRegistration()
-    await hermes_registration.register_component(
+    is_registered_with_hermes = await hermes_registration.register_component(
         component_name="rhetor",
         port=port,
-        version="1.0.0",
+        version=COMPONENT_VERSION,
         capabilities=["llm_routing", "prompt_management", "context_management", "budget_tracking"],
         metadata={
             "description": "LLM orchestration and management",
@@ -158,10 +178,13 @@ async def lifespan(app: FastAPI):
     logger.info("Rhetor shutdown complete")
 
 
-# Initialize FastAPI app
+# Initialize FastAPI app with standard configuration
 app = FastAPI(
-    title="Rhetor LLM Manager", 
-    version="1.0.0",
+    **get_openapi_configuration(
+        component_name=COMPONENT_NAME,
+        component_version=COMPONENT_VERSION,
+        component_description=COMPONENT_DESCRIPTION
+    ),
     lifespan=lifespan
 )
 
@@ -182,6 +205,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Create standard routers
+routers = create_standard_routers(COMPONENT_NAME)
 
 # Request models
 class MessageRequest(TektonBaseModel):
@@ -262,7 +287,7 @@ class BudgetPolicyRequest(TektonBaseModel):
     policy: str  # ignore, warn, enforce
     provider: str = "all"
 
-@app.get("/")
+@routers.root.get("/")
 async def root():
     """Root endpoint - provides basic information"""
     providers = {}
@@ -301,9 +326,10 @@ async def root():
         }
     
     return {
-        "name": "Rhetor LLM Manager",
-        "version": "0.1.0",
+        "name": f"{COMPONENT_NAME} LLM Manager",
+        "version": COMPONENT_VERSION,
         "status": "running",
+        "description": COMPONENT_DESCRIPTION,
         "endpoints": [
             "/message", "/stream", "/chat", "/ws", "/providers", "/health", 
             "/templates", "/prompts", "/contexts", "/budget"
@@ -311,10 +337,11 @@ async def root():
         "providers": providers,
         "templates": template_info,
         "prompts": prompt_info,
-        "budget": budget_info
+        "budget": budget_info,
+        "docs": "/api/v1/docs"
     }
 
-@app.get("/health")
+@routers.root.get("/health")
 async def health():
     """Health check endpoint following Tekton standards"""
     provider_status = {}
@@ -327,14 +354,17 @@ async def health():
     config = get_component_config()
     port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT", 8003))
     
-    return {
-        "status": "healthy",
-        "component": "rhetor",
-        "version": "1.0.0",
-        "port": port,
-        "message": "Rhetor is running normally",
-        "providers": provider_status
-    }
+    return create_health_response(
+        component_name="rhetor",
+        port=port,
+        version=COMPONENT_VERSION,
+        status="healthy",
+        registered=is_registered_with_hermes,
+        details={
+            "message": "Rhetor is running normally",
+            "providers": provider_status
+        }
+    )
 
 @app.get("/providers")
 async def providers():
@@ -1635,6 +1665,84 @@ async def get_model_tiers():
         logger.error(f"Error getting model tiers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# Add ready endpoint
+routers.root.add_api_route(
+    "/ready",
+    create_ready_endpoint(
+        component_name=COMPONENT_NAME,
+        component_version=COMPONENT_VERSION,
+        start_time=start_time or 0,
+        readiness_check=lambda: llm_client is not None and context_manager is not None
+    ),
+    methods=["GET"]
+)
+
+# Add discovery endpoint to v1 router
+routers.v1.add_api_route(
+    "/discovery",
+    create_discovery_endpoint(
+        component_name=COMPONENT_NAME,
+        component_version=COMPONENT_VERSION,
+        component_description=COMPONENT_DESCRIPTION,
+        endpoints=[
+            EndpointInfo(
+                path="/api/v1/send",
+                method="POST",
+                description="Send message to LLM"
+            ),
+            EndpointInfo(
+                path="/api/v1/chat",
+                method="POST",
+                description="Chat conversation with LLM"
+            ),
+            EndpointInfo(
+                path="/api/v1/stream",
+                method="POST",
+                description="Stream LLM response"
+            ),
+            EndpointInfo(
+                path="/api/v1/providers",
+                method="GET",
+                description="List available LLM providers"
+            ),
+            EndpointInfo(
+                path="/api/v1/templates",
+                method="GET",
+                description="List prompt templates"
+            ),
+            EndpointInfo(
+                path="/api/v1/contexts",
+                method="GET",
+                description="List active contexts"
+            ),
+            EndpointInfo(
+                path="/api/v1/budget/usage",
+                method="GET",
+                description="Get budget usage statistics"
+            )
+        ],
+        capabilities=[
+            "llm_routing",
+            "prompt_management", 
+            "context_management",
+            "budget_tracking",
+            "streaming_responses",
+            "template_rendering"
+        ],
+        dependencies={
+            "hermes": "http://localhost:8001"
+        },
+        metadata={
+            "websocket_endpoint": "/ws",
+            "documentation": "/api/v1/docs"
+        }
+    ),
+    methods=["GET"]
+)
+
+# Mount standard routers
+mount_standard_routers(app, routers)
 
 # Add shutdown endpoint using shared utility
 
