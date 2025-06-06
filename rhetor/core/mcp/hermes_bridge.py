@@ -88,7 +88,7 @@ class RhetorMCPBridge(MCPService):
         # Create handler that delegates to FastMCP
         async def handler(parameters: Dict[str, Any]) -> Dict[str, Any]:
             # Import here to avoid circular imports
-            from rhetor.core.mcp.fastmcp_endpoints import process_request_func
+            from tekton.mcp.fastmcp.utils.requests import process_mcp_request
             from tekton.mcp.fastmcp.schema import MCPRequest
             
             # Create an MCP request for the FastMCP handler
@@ -99,7 +99,11 @@ class RhetorMCPBridge(MCPService):
             )
             
             # Process through FastMCP
-            response = await process_request_func(self.llm_manager, request)
+            response = await process_mcp_request(
+                component_manager=self.llm_manager,
+                request=request,
+                component_module_path="rhetor.core.mcp.tools"
+            )
             
             # Extract result from response
             if response.status == "success":

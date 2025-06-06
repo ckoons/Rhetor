@@ -7,15 +7,34 @@ prompt engineering, and context management functionality.
 
 import json
 import time
+import logging
 from typing import Dict, Any, List, Optional
-from tekton.mcp.fastmcp.decorators import mcp_tool
+
+# Check if FastMCP is available
+try:
+    from tekton.mcp.fastmcp.decorators import mcp_tool
+    fastmcp_available = True
+except ImportError:
+    fastmcp_available = False
+    # Define dummy decorator
+    def mcp_tool(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
 # LLM Management Tools
 # ============================================================================
 
-@mcp_tool
+@mcp_tool(
+    name="GetAvailableModels",
+    description="Get all available LLM models and providers",
+    tags=["llm", "models", "providers"],
+    category="llm_management"
+)
 async def get_available_models() -> Dict[str, Any]:
     """
     Get all available LLM models and providers.
@@ -65,7 +84,12 @@ async def get_available_models() -> Dict[str, Any]:
         }
 
 
-@mcp_tool
+@mcp_tool(
+    name="SetDefaultModel",
+    description="Set the default model for LLM operations",
+    tags=["llm", "models", "configuration"],
+    category="llm_management"
+)
 async def set_default_model(provider_id: str, model_id: str) -> Dict[str, Any]:
     """
     Set the default model for LLM operations.
@@ -100,7 +124,12 @@ async def set_default_model(provider_id: str, model_id: str) -> Dict[str, Any]:
         }
 
 
-@mcp_tool
+@mcp_tool(
+    name="GetModelCapabilities",
+    description="Get capabilities and specifications for a specific model",
+    tags=["llm", "models", "capabilities"],
+    category="llm_management"
+)
 async def get_model_capabilities(provider_id: str, model_id: str) -> Dict[str, Any]:
     """
     Get capabilities and specifications for a specific model.
@@ -166,7 +195,12 @@ async def get_model_capabilities(provider_id: str, model_id: str) -> Dict[str, A
         }
 
 
-@mcp_tool
+@mcp_tool(
+    name="TestModelConnection",
+    description="Test connection to a specific model",
+    tags=["llm", "models", "testing", "connection"],
+    category="llm_management"
+)
 async def test_model_connection(provider_id: str, model_id: str) -> Dict[str, Any]:
     """
     Test connection to a specific model.
@@ -214,7 +248,12 @@ async def test_model_connection(provider_id: str, model_id: str) -> Dict[str, An
         }
 
 
-@mcp_tool
+@mcp_tool(
+    name="GetModelPerformance",
+    description="Get performance metrics for a specific model",
+    tags=["llm", "models", "performance", "metrics"],
+    category="llm_management"
+)
 async def get_model_performance(
     provider_id: str, 
     model_id: str, 
@@ -288,7 +327,12 @@ async def get_model_performance(
         }
 
 
-@mcp_tool
+@mcp_tool(
+    name="ManageModelRotation",
+    description="Manage automatic model rotation for load balancing or optimization",
+    tags=["llm", "models", "rotation", "load-balancing"],
+    category="llm_management"
+)
 async def manage_model_rotation(
     rotation_strategy: str = "round_robin",
     models: Optional[List[Dict[str, str]]] = None,
@@ -348,7 +392,12 @@ async def manage_model_rotation(
 # Prompt Engineering Tools  
 # ============================================================================
 
-@mcp_tool
+@mcp_tool(
+    name="CreatePromptTemplate",
+    description="Create a new prompt template",
+    tags=["prompts", "templates", "creation"],
+    category="prompt_engineering"
+)
 async def create_prompt_template(
     name: str,
     template: str,
@@ -402,7 +451,12 @@ async def create_prompt_template(
         }
 
 
-@mcp_tool
+@mcp_tool(
+    name="OptimizePrompt",
+    description="Optimize a prompt for better performance",
+    tags=["prompts", "optimization", "performance"],
+    category="prompt_engineering"
+)
 async def optimize_prompt(
     template_id: str,
     optimization_goals: List[str] = None,
@@ -470,7 +524,12 @@ Context: {context}"""
         }
 
 
-@mcp_tool
+@mcp_tool(
+    name="ValidatePromptSyntax",
+    description="Validate prompt syntax and structure",
+    tags=["prompts", "validation", "syntax"],
+    category="prompt_engineering"
+)
 async def validate_prompt_syntax(
     prompt_text: str,
     template_variables: Optional[List[str]] = None
@@ -536,7 +595,12 @@ async def validate_prompt_syntax(
         }
 
 
-@mcp_tool
+@mcp_tool(
+    name="GetPromptHistory",
+    description="Get prompt usage history",
+    tags=["prompts", "history", "usage"],
+    category="prompt_engineering"
+)
 async def get_prompt_history(
     template_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -589,7 +653,12 @@ async def get_prompt_history(
         }
 
 
-@mcp_tool
+@mcp_tool(
+    name="AnalyzePromptPerformance",
+    description="Analyze prompt performance across different contexts",
+    tags=["prompts", "performance", "analysis", "metrics"],
+    category="prompt_engineering"
+)
 async def analyze_prompt_performance(
     prompt_text: str,
     test_contexts: List[Dict[str, Any]],
@@ -654,7 +723,12 @@ async def analyze_prompt_performance(
         }
 
 
-@mcp_tool
+@mcp_tool(
+    name="ManagePromptLibrary",
+    description="Manage the prompt template library",
+    tags=["prompts", "library", "management", "templates"],
+    category="prompt_engineering"
+)
 async def manage_prompt_library(
     action: str,
     template_id: Optional[str] = None,
@@ -784,7 +858,12 @@ async def manage_prompt_library(
 # Context Management Tools
 # ============================================================================
 
-@mcp_tool
+@mcp_tool(
+    name="AnalyzeContextUsage",
+    description="Analyze context usage patterns and efficiency",
+    tags=["context", "usage", "analysis", "efficiency"],
+    category="context_management"
+)
 async def analyze_context_usage(
     context_id: str,
     time_period: str = "last_week",
@@ -872,7 +951,12 @@ async def analyze_context_usage(
         }
 
 
-@mcp_tool
+@mcp_tool(
+    name="OptimizeContextWindow",
+    description="Optimize the context window for better performance",
+    tags=["context", "optimization", "performance", "window"],
+    category="context_management"
+)
 async def optimize_context_window(
     context_id: str,
     optimization_strategy: str = "efficiency",
@@ -960,7 +1044,12 @@ async def optimize_context_window(
         }
 
 
-@mcp_tool
+@mcp_tool(
+    name="TrackContextHistory",
+    description="Track and analyze context history patterns",
+    tags=["context", "history", "tracking", "patterns"],
+    category="context_management"
+)
 async def track_context_history(
     context_id: str,
     analysis_depth: str = "standard",
@@ -1065,7 +1154,12 @@ async def track_context_history(
         }
 
 
-@mcp_tool
+@mcp_tool(
+    name="CompressContext",
+    description="Compress context to reduce token usage while preserving important information",
+    tags=["context", "compression", "tokens", "optimization"],
+    category="context_management"
+)
 async def compress_context(
     context_id: str,
     compression_ratio: float = 0.7,
@@ -1205,3 +1299,32 @@ __all__ = [
     "track_context_history",
     "compress_context"
 ]
+
+def get_all_tools(component_manager=None):
+    """Get all Rhetor MCP tools."""
+    if not fastmcp_available:
+        logger.warning("FastMCP not available, returning empty tools list")
+        return []
+        
+    tools = []
+    
+    # Rhetor tools
+    tools.append(get_available_models._mcp_tool_meta.to_dict())
+    tools.append(set_default_model._mcp_tool_meta.to_dict())
+    tools.append(get_model_capabilities._mcp_tool_meta.to_dict())
+    tools.append(test_model_connection._mcp_tool_meta.to_dict())
+    tools.append(get_model_performance._mcp_tool_meta.to_dict())
+    tools.append(manage_model_rotation._mcp_tool_meta.to_dict())
+    tools.append(create_prompt_template._mcp_tool_meta.to_dict())
+    tools.append(optimize_prompt._mcp_tool_meta.to_dict())
+    tools.append(validate_prompt_syntax._mcp_tool_meta.to_dict())
+    tools.append(get_prompt_history._mcp_tool_meta.to_dict())
+    tools.append(analyze_prompt_performance._mcp_tool_meta.to_dict())
+    tools.append(manage_prompt_library._mcp_tool_meta.to_dict())
+    tools.append(analyze_context_usage._mcp_tool_meta.to_dict())
+    tools.append(optimize_context_window._mcp_tool_meta.to_dict())
+    tools.append(track_context_history._mcp_tool_meta.to_dict())
+    tools.append(compress_context._mcp_tool_meta.to_dict())
+    
+    logger.info(f"get_all_tools returning {len(tools)} Rhetor MCP tools")
+    return tools
