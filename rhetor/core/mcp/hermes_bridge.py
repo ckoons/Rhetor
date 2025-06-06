@@ -42,8 +42,8 @@ class RhetorMCPBridge(MCPService):
         
         # Load FastMCP tools
         try:
-            from rhetor.core.mcp import get_all_tools
-            self._fastmcp_tools = get_all_tools(self.llm_manager)
+            from .tools import get_all_tools
+            self._fastmcp_tools = get_all_tools(component_manager=self.llm_manager)
             logger.info(f"Loaded {len(self._fastmcp_tools)} FastMCP tools")
         except Exception as e:
             logger.error(f"Failed to load FastMCP tools: {e}")
