@@ -146,6 +146,16 @@ async def lifespan(app: FastAPI):
     if hermes_registration.is_registered:
         heartbeat_task = asyncio.create_task(heartbeat_loop(hermes_registration, "rhetor"))
     
+    # Initialize Hermes MCP Bridge
+    try:
+        from rhetor.core.mcp.hermes_bridge import RhetorMCPBridge
+        mcp_bridge = RhetorMCPBridge(llm_client)
+        await mcp_bridge.initialize()
+        app.state.mcp_bridge = mcp_bridge
+        logger.info("Initialized Hermes MCP Bridge for FastMCP tools")
+    except Exception as e:
+        logger.warning(f"Failed to initialize MCP Bridge: {e}")
+    
     logger.info(f"Rhetor API initialized successfully on port {port}")
     
     yield
@@ -167,6 +177,14 @@ async def lifespan(app: FastAPI):
     
     if llm_client:
         await llm_client.cleanup()
+    
+    # Cleanup MCP bridge
+    if hasattr(app.state, "mcp_bridge") and app.state.mcp_bridge:
+        try:
+            await app.state.mcp_bridge.shutdown()
+            logger.info("MCP bridge cleaned up")
+        except Exception as e:
+            logger.warning(f"Error cleaning up MCP bridge: {e}")
     
     # Deregister from Hermes
     if hasattr(app.state, "hermes_registration") and app.state.hermes_registration:
