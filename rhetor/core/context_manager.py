@@ -361,10 +361,12 @@ class ContextManager:
         self.default_max_messages = default_max_messages
         
         # Directory for local persistence
-        self.persistence_dir = os.environ.get(
-            "RHETOR_CONTEXT_DIR", 
-            str(Path.home() / ".tekton" / "data" / "rhetor" / "contexts")
+        default_context_dir = os.path.join(
+            os.environ.get('TEKTON_DATA_DIR', 
+                          os.path.join(os.environ.get('TEKTON_ROOT', os.path.expanduser('~')), '.tekton', 'data')),
+            'rhetor', 'contexts'
         )
+        self.persistence_dir = os.environ.get("RHETOR_CONTEXT_DIR", default_context_dir)
         os.makedirs(self.persistence_dir, exist_ok=True)
     
     async def initialize(self) -> None:

@@ -290,11 +290,9 @@ class TemplateManager:
         # Set default base directory if not provided
         if not base_dir:
             base_dir = os.path.join(
-                str(Path.home()),
-                ".tekton",
-                "data",
-                "rhetor",
-                "templates"
+                os.environ.get('TEKTON_DATA_DIR', 
+                              os.path.join(os.environ.get('TEKTON_ROOT', os.path.expanduser('~')), '.tekton', 'data')),
+                'rhetor', 'templates'
             )
         
         self.base_dir = Path(base_dir)
