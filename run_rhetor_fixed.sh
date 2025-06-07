@@ -29,14 +29,14 @@ cd "$SCRIPT_DIR"
 export PYTHONPATH="$SCRIPT_DIR:$TEKTON_ROOT:$PYTHONPATH"
 
 # Create necessary directories
-mkdir -p "$HOME/.tekton/logs"
-mkdir -p "$HOME/.tekton/pids"
+mkdir -p "$TEKTON_ROOT/.tekton/logs"
+mkdir -p "$TEKTON_ROOT/.tekton/pids"
 
 # Error handling function
 handle_error() {
     echo -e "${RED}Error: $1${RESET}" >&2
     # Clean up PID file
-    rm -f "$HOME/.tekton/pids/rhetor.pid"
+    rm -f "$TEKTON_ROOT/.tekton/pids/rhetor.pid"
     exit 1
 }
 
@@ -47,7 +47,7 @@ cleanup() {
     # Rhetor will unregister from Hermes automatically in its shutdown event
     
     # Remove PID file
-    rm -f "$HOME/.tekton/pids/rhetor.pid"
+    rm -f "$TEKTON_ROOT/.tekton/pids/rhetor.pid"
     
     echo -e "${GREEN}Rhetor shutdown complete${RESET}"
 }
@@ -64,11 +64,11 @@ echo -e "${YELLOW}Rhetor will register with Hermes on startup...${RESET}"
 echo -e "${YELLOW}Starting Rhetor API server...${RESET}"
 
 # Start Python in background - this works identically on macOS and Linux
-python -m rhetor > "$HOME/.tekton/logs/rhetor.log" 2>&1 &
+python -m rhetor > "$TEKTON_ROOT/.tekton/logs/rhetor.log" 2>&1 &
 RHETOR_PID=$!
 
 # Store the process ID
-echo $RHETOR_PID > "$HOME/.tekton/pids/rhetor.pid"
+echo $RHETOR_PID > "$TEKTON_ROOT/.tekton/pids/rhetor.pid"
 echo -e "${YELLOW}Rhetor process ID: $RHETOR_PID${RESET}"
 
 # Enhanced signal handling
@@ -117,7 +117,7 @@ for i in {1..30}; do
     # Check if the process is still running
     if ! kill -0 $RHETOR_PID 2>/dev/null; then
         echo -e "${RED}Rhetor process terminated unexpectedly${RESET}"
-        tail -n 50 "$HOME/.tekton/logs/rhetor.log"
+        tail -n 50 "$TEKTON_ROOT/.tekton/logs/rhetor.log"
         handle_error "Rhetor failed to start"
     fi
     

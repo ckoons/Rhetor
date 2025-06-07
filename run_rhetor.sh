@@ -29,7 +29,7 @@ source "$TEKTON_ROOT/shared/utils/setup_env.sh"
 setup_tekton_env "$SCRIPT_DIR" "$TEKTON_ROOT"
 
 # Create log directories
-mkdir -p "$HOME/.tekton/logs"
+mkdir -p "$TEKTON_ROOT/.tekton/logs"
 
 # Error handling function
 handle_error() {
@@ -53,7 +53,7 @@ sleep 2
 
 # Start the Rhetor service
 echo -e "${YELLOW}Starting Rhetor API server...${RESET}"
-python -m rhetor > "$HOME/.tekton/logs/rhetor.log" 2>&1 &
+python -m rhetor > "$TEKTON_ROOT/.tekton/logs/rhetor.log" 2>&1 &
 RHETOR_PID=$!
 
 # Trap signals for graceful shutdown
@@ -72,7 +72,7 @@ for i in {1..30}; do
     # Check if the process is still running
     if ! kill -0 $RHETOR_PID 2>/dev/null; then
         echo -e "${RED}Rhetor process terminated unexpectedly${RESET}"
-        cat "$HOME/.tekton/logs/rhetor.log"
+        cat "$TEKTON_ROOT/.tekton/logs/rhetor.log"
         handle_error "Rhetor failed to start"
     fi
     
