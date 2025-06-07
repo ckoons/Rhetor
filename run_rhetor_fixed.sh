@@ -29,7 +29,8 @@ cd "$SCRIPT_DIR"
 export PYTHONPATH="$SCRIPT_DIR:$TEKTON_ROOT:$PYTHONPATH"
 
 # Create necessary directories
-mkdir -p "$TEKTON_ROOT/.tekton/logs"
+LOG_DIR="${TEKTON_LOG_DIR:-$TEKTON_ROOT/.tekton/logs}"
+mkdir -p "$LOG_DIR"
 mkdir -p "$TEKTON_ROOT/.tekton/pids"
 
 # Error handling function
@@ -64,7 +65,7 @@ echo -e "${YELLOW}Rhetor will register with Hermes on startup...${RESET}"
 echo -e "${YELLOW}Starting Rhetor API server...${RESET}"
 
 # Start Python in background - this works identically on macOS and Linux
-python -m rhetor > "$TEKTON_ROOT/.tekton/logs/rhetor.log" 2>&1 &
+python -m rhetor > "$LOG_DIR/rhetor.log" 2>&1 &
 RHETOR_PID=$!
 
 # Store the process ID
@@ -117,7 +118,7 @@ for i in {1..30}; do
     # Check if the process is still running
     if ! kill -0 $RHETOR_PID 2>/dev/null; then
         echo -e "${RED}Rhetor process terminated unexpectedly${RESET}"
-        tail -n 50 "$TEKTON_ROOT/.tekton/logs/rhetor.log"
+        tail -n 50 "$LOG_DIR/rhetor.log"
         handle_error "Rhetor failed to start"
     fi
     
