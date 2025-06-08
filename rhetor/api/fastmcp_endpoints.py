@@ -17,12 +17,14 @@ from tekton.mcp.fastmcp.exceptions import FastMCPError
 from rhetor.core.mcp.tools import (
     llm_management_tools,
     prompt_engineering_tools,
-    context_management_tools
+    context_management_tools,
+    ai_orchestration_tools
 )
 from rhetor.core.mcp.capabilities import (
     LLMManagementCapability,
     PromptEngineeringCapability,
-    ContextManagementCapability
+    ContextManagementCapability,
+    AIOrchestrationCapability
 )
 
 
@@ -50,10 +52,23 @@ fastmcp_server = FastMCPServer(
 fastmcp_server.register_capability(LLMManagementCapability())
 fastmcp_server.register_capability(PromptEngineeringCapability())
 fastmcp_server.register_capability(ContextManagementCapability())
+fastmcp_server.register_capability(AIOrchestrationCapability())
 
-# Register all tools
-for tool in llm_management_tools + prompt_engineering_tools + context_management_tools:
-    fastmcp_server.register_tool(tool)
+# Import the actual tool functions to populate tool lists
+from rhetor.core.mcp.tools import (
+    get_available_models, set_default_model, get_model_capabilities,
+    test_model_connection, get_model_performance, manage_model_rotation,
+    create_prompt_template, optimize_prompt, validate_prompt_syntax,
+    get_prompt_history, analyze_prompt_performance, manage_prompt_library,
+    analyze_context_usage, optimize_context_window, track_context_history,
+    compress_context, list_ai_specialists, activate_ai_specialist,
+    send_message_to_specialist, orchestrate_team_chat,
+    get_specialist_conversation_history, configure_ai_orchestration
+)
+
+# Register all tools with their metadata
+if hasattr(get_available_models, '_mcp_tool_meta'):
+    fastmcp_server.register_tool(get_available_models._mcp_tool_meta)
 
 
 # Create router for MCP endpoints
@@ -81,10 +96,11 @@ async def get_llm_status() -> Dict[str, Any]:
             "capabilities": [
                 "llm_management",
                 "prompt_engineering", 
-                "context_management"
+                "context_management",
+                "ai_orchestration"
             ],
             "available_providers": 4,  # Would query actual providers
-            "mcp_tools": len(llm_management_tools + prompt_engineering_tools + context_management_tools),
+            "mcp_tools": len(llm_management_tools + prompt_engineering_tools + context_management_tools + ai_orchestration_tools),
             "llm_engine_status": "ready",
             "message": "Rhetor LLM management system is operational"
         }

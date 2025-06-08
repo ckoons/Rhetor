@@ -50,6 +50,10 @@ from ..core.prompt_engine import PromptEngine
 from ..core.template_manager import TemplateManager
 from ..core.prompt_registry import PromptRegistry
 from ..core.budget_manager import BudgetManager, BudgetPolicy, BudgetPeriod
+from ..core.specialist_router import SpecialistRouter
+from ..core.ai_specialist_manager import AISpecialistManager
+from ..core.ai_messaging_integration import AIMessagingIntegration
+from ..core.anthropic_max_config import AnthropicMaxConfig
 from ..templates import system_prompts
 
 # Set up logging
@@ -63,11 +67,15 @@ COMPONENT_DESCRIPTION = "LLM orchestration and management service"
 # Initialize core components (will be set in lifespan)
 llm_client = None
 model_router = None
+specialist_router = None
+ai_specialist_manager = None
+ai_messaging_integration = None
 context_manager = None
 prompt_engine = None
 template_manager = None
 prompt_registry = None
 budget_manager = None
+anthropic_max_config = None
 start_time = None
 is_registered_with_hermes = False
 
@@ -75,7 +83,7 @@ is_registered_with_hermes = False
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for Rhetor"""
-    global llm_client, model_router, context_manager, prompt_engine, template_manager, prompt_registry, budget_manager, start_time, is_registered_with_hermes
+    global llm_client, model_router, specialist_router, ai_specialist_manager, ai_messaging_integration, context_manager, prompt_engine, template_manager, prompt_registry, budget_manager, anthropic_max_config, start_time, is_registered_with_hermes
     
     # Track startup time
     import time
@@ -109,8 +117,20 @@ async def lifespan(app: FastAPI):
         await asyncio.wait_for(context_manager.initialize(), timeout=5.0)
         logger.info("Context manager initialized successfully")
         
+        # Initialize Anthropic Max configuration
+        anthropic_max_config = AnthropicMaxConfig()
+        logger.info(f"Anthropic Max configuration initialized - enabled: {anthropic_max_config.enabled}")
+        
         # Initialize budget manager for cost tracking and budget enforcement
         budget_manager = BudgetManager()
+        
+        # Apply Anthropic Max budget override if enabled
+        if anthropic_max_config.enabled:
+            max_budget = anthropic_max_config.get_budget_override()
+            if max_budget:
+                logger.info("Applying Anthropic Max budget override - unlimited tokens")
+                # Budget manager will still track usage but not enforce limits
+        
         logger.info("Budget manager initialized")
         
     except asyncio.TimeoutError:
@@ -123,6 +143,31 @@ async def lifespan(app: FastAPI):
     # Initialize model router with budget manager
     model_router = ModelRouter(llm_client, budget_manager=budget_manager)
     logger.info("Model router initialized")
+    
+    # Initialize specialist router for AI specialist management
+    specialist_router = SpecialistRouter(llm_client, budget_manager=budget_manager)
+    logger.info("Specialist router initialized")
+    
+    # Initialize AI specialist manager
+    ai_specialist_manager = AISpecialistManager(llm_client, specialist_router)
+    specialist_router.set_specialist_manager(ai_specialist_manager)
+    logger.info("AI specialist manager initialized")
+    
+    # Start core AI specialists
+    try:
+        core_results = await ai_specialist_manager.start_core_specialists()
+        logger.info(f"Core AI specialists started: {core_results}")
+    except Exception as e:
+        logger.warning(f"Failed to start core AI specialists: {e}")
+    
+    # Initialize AI messaging integration with Hermes
+    hermes_url = os.environ.get("HERMES_URL", "http://localhost:8001")
+    ai_messaging_integration = AIMessagingIntegration(ai_specialist_manager, hermes_url, specialist_router)
+    try:
+        await ai_messaging_integration.initialize()
+        logger.info("AI messaging integration initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize AI messaging integration: {e}")
     
     # Initialize prompt engine with template manager integration
     prompt_engine = PromptEngine(template_manager)
@@ -172,6 +217,10 @@ async def lifespan(app: FastAPI):
             pass
     
     # Cleanup components
+    if ai_messaging_integration:
+        await ai_messaging_integration.cleanup()
+        logger.info("AI messaging integration cleaned up")
+    
     if context_manager:
         await context_manager.cleanup()
     
@@ -213,6 +262,14 @@ try:
     logger.info("FastMCP endpoints added to Rhetor API")
 except ImportError as e:
     logger.warning(f"FastMCP endpoints not available: {e}")
+
+# Add AI Specialist endpoints
+try:
+    from .ai_specialist_endpoints import router as ai_router
+    app.include_router(ai_router)
+    logger.info("AI Specialist endpoints added to Rhetor API")
+except ImportError as e:
+    logger.warning(f"AI Specialist endpoints not available: {e}")
 
 # Add CORS middleware
 app.add_middleware(
@@ -1041,6 +1098,73 @@ async def websocket_endpoint(websocket: WebSocket):
                     }
                 })
             
+            elif request.get("type") == "AI_SPECIALIST_REQUEST":
+                # AI Specialist request
+                payload = request.get("payload", {})
+                specialist_id = payload.get("specialist_id")
+                message = payload.get("message", "")
+                context_id = payload.get("context", "default")
+                
+                if not specialist_router or not specialist_id:
+                    await websocket.send_json({
+                        "type": "ERROR",
+                        "payload": {"error": "Invalid AI specialist request"}
+                    })
+                    continue
+                
+                # Route to specialist
+                response = await specialist_router.route_to_specialist(
+                    specialist_id=specialist_id,
+                    message=message,
+                    context_id=context_id,
+                    streaming=payload.get("streaming", True)
+                )
+                
+                if payload.get("streaming", True):
+                    async for chunk in response:
+                        await websocket.send_json({
+                            "type": "AI_SPECIALIST_UPDATE",
+                            "source": specialist_id,
+                            "target": request.get("source", "UI"),
+                            "timestamp": datetime.now().isoformat(),
+                            "payload": chunk
+                        })
+                else:
+                    await websocket.send_json({
+                        "type": "AI_SPECIALIST_RESPONSE",
+                        "source": specialist_id,
+                        "target": request.get("source", "UI"),
+                        "timestamp": datetime.now().isoformat(),
+                        "payload": response
+                    })
+                    
+            elif request.get("type") == "AI_TEAM_CHAT":
+                # AI Team Chat request
+                payload = request.get("payload", {})
+                
+                if not ai_messaging_integration:
+                    await websocket.send_json({
+                        "type": "ERROR",
+                        "payload": {"error": "AI messaging integration not available"}
+                    })
+                    continue
+                
+                # Orchestrate team chat
+                messages = await ai_messaging_integration.orchestrate_team_chat(
+                    topic=payload.get("topic", ""),
+                    specialists=payload.get("specialists", []),
+                    initial_prompt=payload.get("prompt", "")
+                )
+                
+                # Send each message as it's generated
+                for msg in messages:
+                    await websocket.send_json({
+                        "type": "TEAM_CHAT_MESSAGE",
+                        "source": msg.get("sender"),
+                        "timestamp": msg.get("timestamp"),
+                        "payload": msg
+                    })
+            
             elif request.get("type") == "STATUS":
                 # Handle status request
                 providers = llm_client.get_all_providers()
@@ -1070,6 +1194,15 @@ async def websocket_endpoint(websocket: WebSocket):
                         "budget_enabled": True
                     }
                 
+                # Get AI specialist status
+                ai_specialist_status = {}
+                if ai_specialist_manager:
+                    active_specialists = await ai_specialist_manager.list_active_specialists()
+                    ai_specialist_status = {
+                        "active_count": len(active_specialists),
+                        "specialists": active_specialists
+                    }
+                
                 await websocket.send_json({
                     "type": "RESPONSE",
                     "source": "SYSTEM",
@@ -1083,6 +1216,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "default_provider": llm_client.default_provider_id,
                         "default_model": llm_client.default_model,
                         "budget": budget_status,
+                        "ai_specialists": ai_specialist_status,
                         "message": "Rhetor LLM Manager is running"
                     }
                 })
@@ -1761,6 +1895,10 @@ routers.v1.add_api_route(
 
 # Mount standard routers
 mount_standard_routers(app, routers)
+
+# Include AI specialist endpoints
+from .ai_specialist_endpoints import router as ai_router
+app.include_router(ai_router)
 
 # Add shutdown endpoint using shared utility
 

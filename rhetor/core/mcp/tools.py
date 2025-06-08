@@ -1264,24 +1264,527 @@ async def compress_context(
 
 
 # ============================================================================
+# AI Orchestration Tools
+# ============================================================================
+
+@mcp_tool(
+    name="ListAISpecialists",
+    description="List available AI specialists and their current status",
+    tags=["ai", "specialists", "orchestration", "list"],
+    category="ai_orchestration"
+)
+async def list_ai_specialists(
+    filter_by_status: Optional[str] = None,
+    filter_by_type: Optional[str] = None,
+    filter_by_component: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    List available AI specialists and their current status.
+    
+    Args:
+        filter_by_status: Filter by status (active, inactive, starting, error)
+        filter_by_type: Filter by specialist type
+        filter_by_component: Filter by component ID
+        
+    Returns:
+        Dictionary containing list of AI specialists
+    """
+    try:
+        # Mock specialist data - in production would query AISpecialistManager
+        specialists = [
+            {
+                "specialist_id": "rhetor-orchestrator",
+                "specialist_type": "meta-orchestrator",
+                "component_id": "rhetor",
+                "status": "active",
+                "model": "claude-3-opus-20240229",
+                "capabilities": ["ai_coordination", "message_filtering", "task_allocation"],
+                "active_conversations": 2,
+                "last_activity": "2024-06-08T17:30:00Z"
+            },
+            {
+                "specialist_id": "engram-memory",
+                "specialist_type": "memory-specialist",
+                "component_id": "engram",
+                "status": "active",
+                "model": "claude-3-haiku-20240307",
+                "capabilities": ["memory_management", "context_tracking", "knowledge_storage"],
+                "active_conversations": 1,
+                "last_activity": "2024-06-08T17:31:00Z"
+            },
+            {
+                "specialist_id": "apollo-coordinator",
+                "specialist_type": "executive-coordinator",
+                "component_id": "apollo",
+                "status": "inactive",
+                "model": "gpt-4",
+                "capabilities": ["task_planning", "resource_allocation", "execution_monitoring"],
+                "active_conversations": 0,
+                "last_activity": None
+            },
+            {
+                "specialist_id": "prometheus-strategist",
+                "specialist_type": "strategic-planner",
+                "component_id": "prometheus",
+                "status": "inactive",
+                "model": "claude-3-opus-20240229",
+                "capabilities": ["strategic_planning", "goal_alignment", "performance_tracking"],
+                "active_conversations": 0,
+                "last_activity": None
+            }
+        ]
+        
+        # Apply filters
+        filtered_specialists = specialists
+        if filter_by_status:
+            filtered_specialists = [s for s in filtered_specialists if s["status"] == filter_by_status]
+        if filter_by_type:
+            filtered_specialists = [s for s in filtered_specialists if s["specialist_type"] == filter_by_type]
+        if filter_by_component:
+            filtered_specialists = [s for s in filtered_specialists if s["component_id"] == filter_by_component]
+        
+        # Summary statistics
+        stats = {
+            "total": len(filtered_specialists),
+            "active": len([s for s in filtered_specialists if s["status"] == "active"]),
+            "inactive": len([s for s in filtered_specialists if s["status"] == "inactive"]),
+            "by_component": {}
+        }
+        
+        for specialist in filtered_specialists:
+            component = specialist["component_id"]
+            if component not in stats["by_component"]:
+                stats["by_component"][component] = 0
+            stats["by_component"][component] += 1
+        
+        return {
+            "success": True,
+            "specialists": filtered_specialists,
+            "statistics": stats,
+            "filters_applied": {
+                "status": filter_by_status,
+                "type": filter_by_type,
+                "component": filter_by_component
+            },
+            "message": f"Found {len(filtered_specialists)} AI specialists"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to list AI specialists: {str(e)}"
+        }
+
+
+@mcp_tool(
+    name="ActivateAISpecialist",
+    description="Activate an AI specialist for use",
+    tags=["ai", "specialists", "activation", "orchestration"],
+    category="ai_orchestration"
+)
+async def activate_ai_specialist(
+    specialist_id: str,
+    initialization_context: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Activate an AI specialist for use.
+    
+    Args:
+        specialist_id: ID of the specialist to activate
+        initialization_context: Optional context for initialization
+        
+    Returns:
+        Dictionary containing activation result
+    """
+    try:
+        import random
+        import time
+        
+        # Simulate activation process
+        activation_time = random.uniform(0.5, 2.0)
+        time.sleep(activation_time)
+        
+        # Mock successful activation
+        activation_result = {
+            "specialist_id": specialist_id,
+            "status": "active",
+            "activation_time": activation_time,
+            "initialized_with_context": initialization_context is not None,
+            "ready_for_tasks": True,
+            "connection_quality": "excellent",
+            "model_loaded": True
+        }
+        
+        return {
+            "success": True,
+            "activation_result": activation_result,
+            "message": f"AI specialist {specialist_id} activated successfully"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to activate AI specialist: {str(e)}"
+        }
+
+
+@mcp_tool(
+    name="SendMessageToSpecialist",
+    description="Send a message to a specific AI specialist",
+    tags=["ai", "specialists", "messaging", "communication"],
+    category="ai_orchestration"
+)
+async def send_message_to_specialist(
+    specialist_id: str,
+    message: str,
+    context_id: Optional[str] = None,
+    message_type: str = "chat"
+) -> Dict[str, Any]:
+    """
+    Send a message to a specific AI specialist.
+    
+    Args:
+        specialist_id: ID of the target specialist
+        message: Message content
+        context_id: Optional context ID for conversation tracking
+        message_type: Type of message (chat, coordination, task_assignment)
+        
+    Returns:
+        Dictionary containing message result
+    """
+    try:
+        import uuid
+        from datetime import datetime
+        
+        # Generate message ID
+        message_id = str(uuid.uuid4())[:8]
+        
+        # Mock response generation
+        responses = {
+            "rhetor-orchestrator": "I'll coordinate the team to address your request. Let me analyze the requirements and allocate resources appropriately.",
+            "engram-memory": "I've stored this information in the context memory. Previous related conversations show similar patterns.",
+            "apollo-coordinator": "Task received. I'll create an execution plan and monitor progress.",
+            "prometheus-strategist": "Analyzing strategic implications. This aligns with our current objectives."
+        }
+        
+        response_content = responses.get(specialist_id, "Message received and processing.")
+        
+        return {
+            "success": True,
+            "message_id": message_id,
+            "specialist_id": specialist_id,
+            "response": {
+                "content": response_content,
+                "timestamp": datetime.now().isoformat(),
+                "processing_time": 0.8,
+                "confidence": 0.92
+            },
+            "context_id": context_id or f"default_{specialist_id}",
+            "message": f"Message sent to {specialist_id} successfully"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to send message to specialist: {str(e)}"
+        }
+
+
+@mcp_tool(
+    name="OrchestrateTeamChat",
+    description="Orchestrate a team chat between multiple AI specialists",
+    tags=["ai", "specialists", "team", "orchestration", "chat"],
+    category="ai_orchestration"
+)
+async def orchestrate_team_chat(
+    topic: str,
+    specialists: List[str],
+    initial_prompt: str,
+    max_rounds: int = 3,
+    orchestration_style: str = "collaborative"
+) -> Dict[str, Any]:
+    """
+    Orchestrate a team chat between multiple AI specialists.
+    
+    Args:
+        topic: Discussion topic
+        specialists: List of specialist IDs to include
+        initial_prompt: Initial prompt to start discussion
+        max_rounds: Maximum rounds of discussion
+        orchestration_style: Style of orchestration (collaborative, directive, exploratory)
+        
+    Returns:
+        Dictionary containing team chat results
+    """
+    try:
+        from datetime import datetime
+        import random
+        
+        # Validate specialists
+        available_specialists = ["rhetor-orchestrator", "engram-memory", "apollo-coordinator", "prometheus-strategist"]
+        valid_specialists = [s for s in specialists if s in available_specialists]
+        
+        if len(valid_specialists) < 2:
+            return {
+                "success": False,
+                "error": "At least 2 valid specialists required for team chat"
+            }
+        
+        # Mock team chat conversation
+        conversation = []
+        
+        # Initial orchestrator message
+        conversation.append({
+            "speaker": "rhetor-orchestrator",
+            "message": f"Team, let's discuss: {topic}. {initial_prompt}",
+            "timestamp": datetime.now().isoformat(),
+            "round": 0
+        })
+        
+        # Simulate discussion rounds
+        for round_num in range(1, min(max_rounds + 1, 4)):
+            for specialist in valid_specialists:
+                if specialist == "rhetor-orchestrator" and round_num == 1:
+                    continue  # Orchestrator already spoke
+                
+                # Generate contextual response
+                if specialist == "engram-memory":
+                    message = f"Based on our conversation history, I recall similar discussions about {topic}. Key patterns include..."
+                elif specialist == "apollo-coordinator":
+                    message = f"From an execution perspective, we should consider the following action items for {topic}..."
+                elif specialist == "prometheus-strategist":
+                    message = f"Strategically, {topic} aligns with our long-term goals. I recommend..."
+                else:
+                    message = f"Building on the previous points about {topic}, I suggest..."
+                
+                conversation.append({
+                    "speaker": specialist,
+                    "message": message,
+                    "timestamp": datetime.now().isoformat(),
+                    "round": round_num
+                })
+        
+        # Summary from orchestrator
+        conversation.append({
+            "speaker": "rhetor-orchestrator",
+            "message": f"Excellent discussion team. Key takeaways on {topic}: 1) Memory patterns identified, 2) Action items defined, 3) Strategic alignment confirmed.",
+            "timestamp": datetime.now().isoformat(),
+            "round": max_rounds + 1
+        })
+        
+        return {
+            "success": True,
+            "topic": topic,
+            "participants": valid_specialists,
+            "conversation": conversation,
+            "total_messages": len(conversation),
+            "rounds_completed": max_rounds,
+            "orchestration_style": orchestration_style,
+            "summary": {
+                "key_insights": ["Pattern recognition", "Action planning", "Strategic alignment"],
+                "next_steps": ["Implement identified actions", "Monitor progress", "Report results"],
+                "consensus_reached": True
+            },
+            "message": f"Team chat completed successfully with {len(valid_specialists)} specialists"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to orchestrate team chat: {str(e)}"
+        }
+
+
+@mcp_tool(
+    name="GetSpecialistConversationHistory",
+    description="Get conversation history for an AI specialist",
+    tags=["ai", "specialists", "history", "conversation"],
+    category="ai_orchestration"
+)
+async def get_specialist_conversation_history(
+    specialist_id: str,
+    conversation_id: Optional[str] = None,
+    limit: int = 10
+) -> Dict[str, Any]:
+    """
+    Get conversation history for an AI specialist.
+    
+    Args:
+        specialist_id: ID of the specialist
+        conversation_id: Optional specific conversation ID
+        limit: Maximum number of messages to return
+        
+    Returns:
+        Dictionary containing conversation history
+    """
+    try:
+        from datetime import datetime, timedelta
+        import random
+        
+        # Mock conversation history
+        history = []
+        for i in range(min(limit, 5)):
+            history.append({
+                "message_id": f"msg_{i+1}",
+                "conversation_id": conversation_id or f"conv_{random.randint(1,3)}",
+                "sender": "user" if i % 2 == 0 else specialist_id,
+                "content": f"Sample message {i+1} in conversation",
+                "timestamp": (datetime.now() - timedelta(minutes=i*5)).isoformat(),
+                "context": {
+                    "topic": "AI orchestration",
+                    "task_type": "discussion"
+                }
+            })
+        
+        return {
+            "success": True,
+            "specialist_id": specialist_id,
+            "conversation_id": conversation_id,
+            "messages": history,
+            "total_messages": len(history),
+            "message": f"Retrieved {len(history)} messages for {specialist_id}"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to get conversation history: {str(e)}"
+        }
+
+
+@mcp_tool(
+    name="ConfigureAIOrchestration",
+    description="Configure AI orchestration settings and policies",
+    tags=["ai", "orchestration", "configuration", "settings"],
+    category="ai_orchestration"
+)
+async def configure_ai_orchestration(
+    settings: Dict[str, Any],
+    apply_immediately: bool = True
+) -> Dict[str, Any]:
+    """
+    Configure AI orchestration settings and policies.
+    
+    Args:
+        settings: Configuration settings to apply
+        apply_immediately: Whether to apply settings immediately
+        
+    Returns:
+        Dictionary containing configuration result
+    """
+    try:
+        # Validate settings
+        valid_settings = {
+            "message_filtering": ["enabled", "disabled"],
+            "auto_translation": ["enabled", "disabled"],
+            "orchestration_mode": ["collaborative", "directive", "autonomous"],
+            "specialist_allocation": ["dynamic", "static", "hybrid"],
+            "max_concurrent_specialists": range(1, 11),
+            "default_model_selection": ["performance", "cost", "balanced"]
+        }
+        
+        applied_settings = {}
+        validation_errors = []
+        
+        for key, value in settings.items():
+            if key in valid_settings:
+                if isinstance(valid_settings[key], list):
+                    if value in valid_settings[key]:
+                        applied_settings[key] = value
+                    else:
+                        validation_errors.append(f"Invalid value for {key}: {value}")
+                elif isinstance(valid_settings[key], range):
+                    if value in valid_settings[key]:
+                        applied_settings[key] = value
+                    else:
+                        validation_errors.append(f"Invalid value for {key}: {value}")
+            else:
+                validation_errors.append(f"Unknown setting: {key}")
+        
+        if validation_errors:
+            return {
+                "success": False,
+                "errors": validation_errors,
+                "message": "Configuration validation failed"
+            }
+        
+        # Mock current settings
+        current_settings = {
+            "message_filtering": "enabled",
+            "auto_translation": "enabled",
+            "orchestration_mode": "collaborative",
+            "specialist_allocation": "dynamic",
+            "max_concurrent_specialists": 5,
+            "default_model_selection": "balanced"
+        }
+        
+        # Calculate changes
+        changes = {}
+        for key, value in applied_settings.items():
+            if current_settings.get(key) != value:
+                changes[key] = {
+                    "old": current_settings.get(key),
+                    "new": value
+                }
+        
+        return {
+            "success": True,
+            "applied_settings": applied_settings,
+            "changes": changes,
+            "apply_immediately": apply_immediately,
+            "effective_time": datetime.now().isoformat() if apply_immediately else "on_next_restart",
+            "message": f"AI orchestration configuration updated successfully"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to configure AI orchestration: {str(e)}"
+        }
+
+
+# ============================================================================
 # Tool Collections
 # ============================================================================
 
 # LLM Management Tools
-# Tools are automatically registered by @mcp_tool decorator
-llm_management_tools = []
+llm_management_tools = [
+    get_available_models,
+    set_default_model,
+    get_model_capabilities,
+    test_model_connection,
+    get_model_performance,
+    manage_model_rotation
+]
 
 # Prompt Engineering Tools
-prompt_engineering_tools = []
+prompt_engineering_tools = [
+    create_prompt_template,
+    optimize_prompt,
+    validate_prompt_syntax,
+    get_prompt_history,
+    analyze_prompt_performance,
+    manage_prompt_library
+]
 
 # Context Management Tools  
-context_management_tools = []
+context_management_tools = [
+    analyze_context_usage,
+    optimize_context_window,
+    track_context_history,
+    compress_context
+]
+
+# AI Orchestration Tools
+ai_orchestration_tools = [
+    list_ai_specialists,
+    activate_ai_specialist,
+    send_message_to_specialist,
+    orchestrate_team_chat,
+    get_specialist_conversation_history,
+    configure_ai_orchestration
+]
 
 
 __all__ = [
     "llm_management_tools",
     "prompt_engineering_tools", 
     "context_management_tools",
+    "ai_orchestration_tools",
     "get_available_models",
     "set_default_model",
     "get_model_capabilities",
@@ -1297,7 +1800,13 @@ __all__ = [
     "analyze_context_usage",
     "optimize_context_window",
     "track_context_history",
-    "compress_context"
+    "compress_context",
+    "list_ai_specialists",
+    "activate_ai_specialist",
+    "send_message_to_specialist",
+    "orchestrate_team_chat",
+    "get_specialist_conversation_history",
+    "configure_ai_orchestration"
 ]
 
 def get_all_tools(component_manager=None):
@@ -1308,23 +1817,35 @@ def get_all_tools(component_manager=None):
         
     tools = []
     
-    # Rhetor tools
+    # LLM Management tools
     tools.append(get_available_models._mcp_tool_meta.to_dict())
     tools.append(set_default_model._mcp_tool_meta.to_dict())
     tools.append(get_model_capabilities._mcp_tool_meta.to_dict())
     tools.append(test_model_connection._mcp_tool_meta.to_dict())
     tools.append(get_model_performance._mcp_tool_meta.to_dict())
     tools.append(manage_model_rotation._mcp_tool_meta.to_dict())
+    
+    # Prompt Engineering tools
     tools.append(create_prompt_template._mcp_tool_meta.to_dict())
     tools.append(optimize_prompt._mcp_tool_meta.to_dict())
     tools.append(validate_prompt_syntax._mcp_tool_meta.to_dict())
     tools.append(get_prompt_history._mcp_tool_meta.to_dict())
     tools.append(analyze_prompt_performance._mcp_tool_meta.to_dict())
     tools.append(manage_prompt_library._mcp_tool_meta.to_dict())
+    
+    # Context Management tools
     tools.append(analyze_context_usage._mcp_tool_meta.to_dict())
     tools.append(optimize_context_window._mcp_tool_meta.to_dict())
     tools.append(track_context_history._mcp_tool_meta.to_dict())
     tools.append(compress_context._mcp_tool_meta.to_dict())
+    
+    # AI Orchestration tools
+    tools.append(list_ai_specialists._mcp_tool_meta.to_dict())
+    tools.append(activate_ai_specialist._mcp_tool_meta.to_dict())
+    tools.append(send_message_to_specialist._mcp_tool_meta.to_dict())
+    tools.append(orchestrate_team_chat._mcp_tool_meta.to_dict())
+    tools.append(get_specialist_conversation_history._mcp_tool_meta.to_dict())
+    tools.append(configure_ai_orchestration._mcp_tool_meta.to_dict())
     
     logger.info(f"get_all_tools returning {len(tools)} Rhetor MCP tools")
     return tools

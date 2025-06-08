@@ -106,9 +106,44 @@ class ContextManagementCapability(MCPCapability):
         }
 
 
+class AIOrchestrationCapability(MCPCapability):
+    """Capability for AI specialist orchestration and management."""
+    
+    name: str = "ai_orchestration"
+    description: str = "Orchestrate and manage AI specialists for collaborative tasks"
+    version: str = "1.0.0"
+    
+    @classmethod
+    def get_supported_operations(cls) -> List[str]:
+        """Get list of supported operations."""
+        return [
+            "list_ai_specialists",
+            "activate_ai_specialist",
+            "send_message_to_specialist",
+            "orchestrate_team_chat",
+            "get_specialist_conversation_history",
+            "configure_ai_orchestration"
+        ]
+    
+    @classmethod
+    def get_capability_metadata(cls) -> Dict[str, Any]:
+        """Get capability metadata."""
+        return {
+            "category": "ai_orchestration",
+            "provider": "rhetor",
+            "requires_auth": False,
+            "specialist_types": ["meta-orchestrator", "memory-specialist", "executive-coordinator", "strategic-planner"],
+            "orchestration_modes": ["collaborative", "directive", "autonomous"],
+            "communication_types": ["chat", "coordination", "task_assignment", "status_update"],
+            "allocation_strategies": ["dynamic", "static", "hybrid"],
+            "max_concurrent_specialists": 10
+        }
+
+
 # Export all capabilities
 __all__ = [
     "LLMManagementCapability",
     "PromptEngineeringCapability",
-    "ContextManagementCapability"
+    "ContextManagementCapability",
+    "AIOrchestrationCapability"
 ]
