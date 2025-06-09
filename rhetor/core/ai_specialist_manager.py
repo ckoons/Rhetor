@@ -266,7 +266,7 @@ class AISpecialistManager:
         Returns:
             Filtered/translated message
         """
-        logger.debug(f"Rhetor filtering message from {message.sender_id}")
+        # Filter message from sender
         
         # For now, pass most messages unfiltered
         # In full implementation, this would use Rhetor AI to analyze and potentially modify

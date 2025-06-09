@@ -87,6 +87,17 @@ from rhetor.core.mcp.streaming_tools import (
     send_message_to_specialist_stream, orchestrate_team_chat_stream
 )
 
+# Import dynamic specialist tools
+try:
+    from rhetor.core.mcp.dynamic_specialist_tools import (
+        list_specialist_templates, create_dynamic_specialist, clone_specialist,
+        modify_specialist, deactivate_specialist, get_specialist_metrics
+    )
+    dynamic_tools_available = True
+except ImportError:
+    logger.warning("Dynamic specialist tools not available")
+    dynamic_tools_available = False
+
 # Register all tools with their metadata and functions
 all_tools = [
     # LLM Management tools
@@ -104,6 +115,13 @@ all_tools = [
     # Streaming-enabled tools
     send_message_to_specialist_stream, orchestrate_team_chat_stream
 ]
+
+# Add dynamic specialist tools if available
+if dynamic_tools_available:
+    all_tools.extend([
+        list_specialist_templates, create_dynamic_specialist, clone_specialist,
+        modify_specialist, deactivate_specialist, get_specialist_metrics
+    ])
 
 for tool_func in all_tools:
     if hasattr(tool_func, '_mcp_tool_meta'):

@@ -9,6 +9,7 @@ import json
 import time
 import logging
 from typing import Dict, Any, List, Optional
+from datetime import datetime
 
 # Check if FastMCP is available
 try:
@@ -1863,6 +1864,13 @@ ai_orchestration_tools = [
     configure_ai_orchestration
 ]
 
+# Import dynamic specialist tools if available
+try:
+    from .dynamic_specialist_tools import dynamic_specialist_tools
+    ai_orchestration_tools.extend(dynamic_specialist_tools)
+except ImportError:
+    logger.warning("Dynamic specialist tools not available")
+
 
 __all__ = [
     "llm_management_tools",
@@ -1943,6 +1951,14 @@ def get_all_tools(component_manager=None):
     tools.append(safe_tool_dict(orchestrate_team_chat))
     tools.append(safe_tool_dict(get_specialist_conversation_history))
     tools.append(safe_tool_dict(configure_ai_orchestration))
+    
+    # Dynamic specialist tools if available
+    try:
+        from .dynamic_specialist_tools import dynamic_specialist_tools
+        for tool in dynamic_specialist_tools:
+            tools.append(safe_tool_dict(tool))
+    except ImportError:
+        pass
     
     logger.info(f"get_all_tools returning {len(tools)} Rhetor MCP tools")
     return tools

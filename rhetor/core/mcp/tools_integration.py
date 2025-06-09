@@ -249,9 +249,22 @@ class MCPToolsIntegration:
                         "message_type": message_type
                     }
                 )
+                
+                # Return success for cross-component messages
+                return {
+                    "success": True,
+                    "message_id": f"cross-component-{datetime.now().timestamp()}",
+                    "specialist_id": specialist_id,
+                    "response": {
+                        "status": "sent_via_hermes",
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    "context_id": context_id or f"default_{specialist_id}",
+                    "message": f"Message sent to {specialist_id} via Hermes successfully"
+                }
             else:
                 # Internal message
-                response = await self.specialist_manager.send_message(
+                message_id = await self.specialist_manager.send_message(
                     sender_id="user",
                     receiver_id=specialist_id,
                     content=message,
@@ -260,9 +273,13 @@ class MCPToolsIntegration:
                 
                 return {
                     "success": True,
-                    "message_id": response.get("message_id"),
+                    "message_id": message_id,
                     "specialist_id": specialist_id,
-                    "response": response,
+                    "response": {
+                        "message_id": message_id,
+                        "status": "sent",
+                        "timestamp": datetime.now().isoformat()
+                    },
                     "context_id": context_id or f"default_{specialist_id}",
                     "message": f"Message sent to {specialist_id} successfully"
                 }
