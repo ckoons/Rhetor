@@ -8,8 +8,13 @@ allowing external systems to interact with Rhetor LLM management and prompt engi
 import logging
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
+from sse_starlette.sse import EventSourceResponse
 from tekton.models import TektonBaseModel
 import asyncio
+import time
+import json
+import inspect
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +28,7 @@ from rhetor.core.mcp.tools import (
     context_management_tools,
     ai_orchestration_tools
 )
+from rhetor.core.mcp.streaming_tools import streaming_tools
 from rhetor.core.mcp.capabilities import (
     LLMManagementCapability,
     PromptEngineeringCapability,
@@ -42,6 +48,13 @@ class MCPResponse(TektonBaseModel):
     success: bool
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+
+
+class MCPStreamRequest(TektonBaseModel):
+    """Request model for streaming MCP tool execution."""
+    tool_name: str
+    arguments: Dict[str, Any]
+    stream_options: Optional[Dict[str, Any]] = None  # Options like chunk_size, include_progress
 
 
 # Create FastMCP server instance
@@ -69,6 +82,11 @@ from rhetor.core.mcp.tools import (
     get_specialist_conversation_history, configure_ai_orchestration
 )
 
+# Import streaming tools
+from rhetor.core.mcp.streaming_tools import (
+    send_message_to_specialist_stream, orchestrate_team_chat_stream
+)
+
 # Register all tools with their metadata and functions
 all_tools = [
     # LLM Management tools
@@ -82,7 +100,9 @@ all_tools = [
     compress_context,
     # AI Orchestration tools
     list_ai_specialists, activate_ai_specialist, send_message_to_specialist,
-    orchestrate_team_chat, get_specialist_conversation_history, configure_ai_orchestration
+    orchestrate_team_chat, get_specialist_conversation_history, configure_ai_orchestration,
+    # Streaming-enabled tools
+    send_message_to_specialist_stream, orchestrate_team_chat_stream
 ]
 
 for tool_func in all_tools:
@@ -93,7 +113,7 @@ for tool_func in all_tools:
             tool_func
         )
 
-logger.info(f"Registered {len(all_tools)} MCP tools with FastMCP server")
+logger.info(f"Registered {len(all_tools)} MCP tools with FastMCP server (including {len(streaming_tools)} streaming tools)")
 
 
 # Create router for MCP endpoints
@@ -557,6 +577,223 @@ async def _multi_model_comparison_workflow(parameters: Dict[str, Any]) -> Dict[s
             "comparison_confidence": "high" if len(model_rankings) >= 2 else "medium"
         }
     }
+
+
+# ============================================================================
+# Streaming Support for Real-Time AI Responses
+# ============================================================================
+
+@mcp_router.post("/stream")
+async def stream_mcp_tool(request: MCPStreamRequest) -> EventSourceResponse:
+    """
+    Execute an MCP tool with Server-Sent Events (SSE) streaming support.
+    
+    This endpoint enables real-time streaming of AI responses and progress updates
+    for long-running operations like AI specialist interactions.
+    
+    Args:
+        request: Streaming request with tool name, arguments, and stream options
+        
+    Returns:
+        EventSourceResponse with real-time updates
+    """
+    tool_name = request.tool_name
+    arguments = request.arguments
+    stream_options = request.stream_options or {}
+    
+    logger.info(f"Starting streaming execution for tool: {tool_name}")
+    
+    async def event_generator():
+        """Generate SSE events for the streaming response."""
+        try:
+            # Send initial connection event
+            yield {
+                "event": "connected",
+                "data": json.dumps({
+                    "tool_name": tool_name,
+                    "timestamp": time.time(),
+                    "message": f"Connected to streaming execution for {tool_name}"
+                })
+            }
+            
+            # Get the tool function
+            tool_func = fastmcp_server.get_tool_function(tool_name)
+            if not tool_func:
+                yield {
+                    "event": "error",
+                    "data": json.dumps({
+                        "error": f"Tool {tool_name} not found",
+                        "timestamp": time.time()
+                    })
+                }
+                return
+            
+            # Check if this tool supports streaming
+            supports_streaming = getattr(tool_func, '_supports_streaming', False)
+            
+            if supports_streaming:
+                # Execute with streaming support
+                logger.debug(f"Executing {tool_name} with native streaming support")
+                
+                # Create a queue for streaming events
+                event_queue = asyncio.Queue()
+                
+                # Add streaming callback to arguments
+                async def stream_callback(event_type: str, data: Any):
+                    """Callback for streaming updates from the tool."""
+                    await event_queue.put({
+                        "event": event_type,
+                        "data": json.dumps({
+                            "content": data,
+                            "timestamp": time.time()
+                        })
+                    })
+                
+                # Execute tool in background task
+                async def run_tool():
+                    try:
+                        result = tool_func(**arguments, _stream_callback=stream_callback)
+                        if inspect.iscoroutine(result):
+                            result = await result
+                        # Put result in queue
+                        await event_queue.put({
+                            "event": "complete",
+                            "data": json.dumps({
+                                "result": result,
+                                "timestamp": time.time()
+                            })
+                        })
+                    except Exception as e:
+                        await event_queue.put({
+                            "event": "error",
+                            "data": json.dumps({
+                                "error": str(e),
+                                "timestamp": time.time()
+                            })
+                        })
+                    finally:
+                        await event_queue.put(None)  # Sentinel to signal completion
+                
+                # Start tool execution
+                task = asyncio.create_task(run_tool())
+                
+                # Yield events from queue
+                while True:
+                    event = await event_queue.get()
+                    if event is None:  # Sentinel received
+                        break
+                    yield event
+                
+                # Ensure task is complete
+                await task
+            else:
+                # Execute without streaming but with progress updates
+                logger.debug(f"Executing {tool_name} with simulated progress updates")
+                
+                # Send progress: starting
+                yield {
+                    "event": "progress",
+                    "data": json.dumps({
+                        "stage": "starting",
+                        "percentage": 0,
+                        "message": f"Starting execution of {tool_name}",
+                        "timestamp": time.time()
+                    })
+                }
+                
+                # Execute the tool
+                start_time = time.time()
+                result = tool_func(**arguments)
+                
+                # Send progress: processing
+                yield {
+                    "event": "progress", 
+                    "data": json.dumps({
+                        "stage": "processing",
+                        "percentage": 50,
+                        "message": "Processing request...",
+                        "timestamp": time.time()
+                    })
+                }
+                
+                # Check if result is a coroutine
+                if inspect.iscoroutine(result):
+                    result = await result
+                
+                # Send progress: finalizing
+                yield {
+                    "event": "progress",
+                    "data": json.dumps({
+                        "stage": "finalizing",
+                        "percentage": 90,
+                        "message": "Finalizing response...",
+                        "timestamp": time.time()
+                    })
+                }
+                
+                # Send complete event with result
+                execution_time = time.time() - start_time
+                yield {
+                    "event": "complete",
+                    "data": json.dumps({
+                        "result": result,
+                        "execution_time": execution_time,
+                        "timestamp": time.time()
+                    })
+                }
+                
+        except Exception as e:
+            logger.error(f"Error in streaming execution of {tool_name}: {e}")
+            yield {
+                "event": "error",
+                "data": json.dumps({
+                    "error": str(e),
+                    "tool_name": tool_name,
+                    "timestamp": time.time()
+                })
+            }
+        finally:
+            # Send disconnect event
+            yield {
+                "event": "disconnect",
+                "data": json.dumps({
+                    "message": "Streaming connection closed",
+                    "timestamp": time.time()
+                })
+            }
+    
+    return EventSourceResponse(event_generator())
+
+
+@mcp_router.get("/stream/test")
+async def test_streaming() -> EventSourceResponse:
+    """
+    Test endpoint for SSE streaming functionality.
+    
+    Returns:
+        EventSourceResponse with test events
+    """
+    async def test_generator():
+        """Generate test SSE events."""
+        for i in range(5):
+            yield {
+                "event": "test",
+                "data": json.dumps({
+                    "message": f"Test event {i+1}",
+                    "timestamp": time.time()
+                })
+            }
+            await asyncio.sleep(1)
+        
+        yield {
+            "event": "complete",
+            "data": json.dumps({
+                "message": "Test complete",
+                "timestamp": time.time()
+            })
+        }
+    
+    return EventSourceResponse(test_generator())
 
 
 # Export the router
