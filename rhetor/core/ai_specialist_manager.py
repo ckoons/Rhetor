@@ -75,6 +75,19 @@ class AISpecialistManager:
         self.rhetor_filters_enabled = True
         self.auto_translation_enabled = True
         
+        # Orchestration settings
+        self.orchestration_settings = {
+            "message_filtering": "enabled",
+            "auto_translation": "enabled",
+            "orchestration_mode": "collaborative",
+            "specialist_allocation": "dynamic",
+            "max_concurrent_specialists": 5,
+            "default_model_selection": "balanced"
+        }
+        
+        # Conversation history storage
+        self.conversation_history: Dict[str, List[Dict[str, Any]]] = {}
+        
         # Load specialist configurations
         self._load_specialist_configs()
         
@@ -367,3 +380,142 @@ class AISpecialistManager:
         # Return conversation history
         conversation_key = f"{specialist1_id}:{specialist2_id}"
         return self.active_conversations.get(conversation_key, [])
+    
+    async def activate_specialist(self, specialist_id: str, initialization_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Activate an AI specialist (similar to create_specialist but returns more detailed info).
+        
+        Args:
+            specialist_id: ID of the specialist to activate
+            initialization_context: Optional initialization context
+            
+        Returns:
+            Dictionary containing activation result
+        """
+        try:
+            success = await self.create_specialist(specialist_id)
+            
+            if not success:
+                return {
+                    "success": False,
+                    "error": f"Failed to activate specialist {specialist_id}"
+                }
+            
+            config = self.specialists[specialist_id]
+            
+            # Store initialization context if provided
+            if initialization_context:
+                config.personality["initialization_context"] = initialization_context
+            
+            # Get detailed status
+            status = await self.get_specialist_status(specialist_id)
+            
+            return {
+                "success": True,
+                "specialist_id": specialist_id,
+                "status": config.status,
+                "activation_time": 0.1,  # Simulated
+                "initialized_with_context": initialization_context is not None,
+                "ready_for_tasks": config.status == "active",
+                "connection_quality": "excellent" if config.status == "active" else "poor",
+                "model_loaded": config.status == "active",
+                "details": status
+            }
+            
+        except Exception as e:
+            logger.error(f"Error activating specialist {specialist_id}: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    async def get_conversation_history(self, specialist_id: str, conversation_id: Optional[str] = None, limit: int = 10) -> Dict[str, Any]:
+        """
+        Get conversation history for an AI specialist.
+        
+        Args:
+            specialist_id: ID of the specialist
+            conversation_id: Optional specific conversation ID
+            limit: Maximum number of messages to return
+            
+        Returns:
+            Dictionary containing conversation history
+        """
+        try:
+            messages = []
+            
+            if conversation_id:
+                # Get specific conversation
+                if conversation_id in self.conversation_history:
+                    messages = self.conversation_history[conversation_id][-limit:]
+            else:
+                # Get all conversations involving this specialist
+                for conv_key, conv_messages in self.active_conversations.items():
+                    # Check if specialist is involved in this conversation
+                    if specialist_id in conv_key:
+                        for msg in conv_messages[-limit:]:
+                            if msg.sender_id == specialist_id or msg.receiver_id == specialist_id:
+                                messages.append({
+                                    "message_id": msg.message_id,
+                                    "conversation_id": conv_key,
+                                    "sender": msg.sender_id,
+                                    "receiver": msg.receiver_id,
+                                    "content": msg.content,
+                                    "timestamp": msg.timestamp,
+                                    "message_type": msg.message_type,
+                                    "context": msg.context
+                                })
+                
+                # Sort by timestamp and limit
+                messages = sorted(messages, key=lambda x: x["timestamp"], reverse=True)[:limit]
+            
+            return {
+                "success": True,
+                "messages": messages,
+                "total_count": len(messages)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting conversation history: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "messages": []
+            }
+    
+    async def get_orchestration_settings(self) -> Dict[str, Any]:
+        """
+        Get current AI orchestration settings.
+        
+        Returns:
+            Dictionary containing current orchestration settings
+        """
+        return self.orchestration_settings.copy()
+    
+    async def update_orchestration_settings(self, new_settings: Dict[str, Any]) -> bool:
+        """
+        Update AI orchestration settings.
+        
+        Args:
+            new_settings: New settings to apply
+            
+        Returns:
+            True if settings were updated successfully
+        """
+        try:
+            # Update settings
+            self.orchestration_settings.update(new_settings)
+            
+            # Apply relevant settings
+            if "message_filtering" in new_settings:
+                self.rhetor_filters_enabled = new_settings["message_filtering"] == "enabled"
+            
+            if "auto_translation" in new_settings:
+                self.auto_translation_enabled = new_settings["auto_translation"] == "enabled"
+            
+            logger.info(f"Updated orchestration settings: {new_settings}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error updating orchestration settings: {e}")
+            return False

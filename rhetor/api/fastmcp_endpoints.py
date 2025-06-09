@@ -5,10 +5,13 @@ This module provides FastAPI endpoints for MCP (Model Context Protocol) integrat
 allowing external systems to interact with Rhetor LLM management and prompt engineering capabilities.
 """
 
+import logging
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, Depends
 from tekton.models import TektonBaseModel
 import asyncio
+
+logger = logging.getLogger(__name__)
 
 from tekton.mcp.fastmcp.server import FastMCPServer
 from tekton.mcp.fastmcp.utils.endpoints import add_mcp_endpoints
@@ -66,16 +69,149 @@ from rhetor.core.mcp.tools import (
     get_specialist_conversation_history, configure_ai_orchestration
 )
 
-# Register all tools with their metadata
-if hasattr(get_available_models, '_mcp_tool_meta'):
-    fastmcp_server.register_tool(get_available_models._mcp_tool_meta)
+# Register all tools with their metadata and functions
+all_tools = [
+    # LLM Management tools
+    get_available_models, set_default_model, get_model_capabilities,
+    test_model_connection, get_model_performance, manage_model_rotation,
+    # Prompt Engineering tools
+    create_prompt_template, optimize_prompt, validate_prompt_syntax,
+    get_prompt_history, analyze_prompt_performance, manage_prompt_library,
+    # Context Management tools
+    analyze_context_usage, optimize_context_window, track_context_history,
+    compress_context,
+    # AI Orchestration tools
+    list_ai_specialists, activate_ai_specialist, send_message_to_specialist,
+    orchestrate_team_chat, get_specialist_conversation_history, configure_ai_orchestration
+]
+
+for tool_func in all_tools:
+    if hasattr(tool_func, '_mcp_tool_meta'):
+        # Register both the metadata and the function
+        fastmcp_server.register_tool(
+            tool_func._mcp_tool_meta,
+            tool_func
+        )
+
+logger.info(f"Registered {len(all_tools)} MCP tools with FastMCP server")
 
 
 # Create router for MCP endpoints
 mcp_router = APIRouter(prefix="/api/mcp/v2")
 
-# Add standard MCP endpoints using shared utilities
-add_mcp_endpoints(mcp_router, fastmcp_server)
+# Create wrapper functions for the FastMCPServer
+def get_capabilities_func(component_manager=None):
+    """Get capabilities from FastMCP server."""
+    capabilities = fastmcp_server.get_capabilities()
+    # Convert to list of dicts for the endpoint
+    return [
+        {
+            "name": cap.name if hasattr(cap, 'name') else name,
+            "description": cap.description if hasattr(cap, 'description') else "Capability",
+            "version": cap.version if hasattr(cap, 'version') else "1.0.0"
+        }
+        for name, cap in capabilities.items()
+    ]
+
+def get_tools_func(component_manager=None):
+    """Get tools from FastMCP server."""
+    tools = []
+    
+    # Get tools from the FastMCP server
+    server_tools = fastmcp_server._tools
+    logger.info(f"FastMCP server has {len(server_tools)} tools registered")
+    
+    for tool_name, tool_meta in server_tools.items():
+        # The tool_meta is the MCPTool object registered with the server
+        tool_dict = {
+            "name": tool_meta.name,
+            "description": tool_meta.description,
+            "parameters": tool_meta.parameters if hasattr(tool_meta, 'parameters') else {},
+            "tags": tool_meta.tags if hasattr(tool_meta, 'tags') else [],
+            "category": tool_meta.category if hasattr(tool_meta, 'category') else 'general'
+        }
+        tools.append(tool_dict)
+        logger.debug(f"Added tool: {tool_dict['name']}")
+    
+    logger.info(f"get_tools_func returning {len(tools)} tools")
+    return tools
+
+async def process_request_func(request_data: Dict[str, Any], component_manager=None):
+    """Process MCP request using FastMCP server."""
+    tool_name = request_data.get("tool_name")
+    arguments = request_data.get("arguments", {})
+    
+    logger.info(f"Processing MCP request for tool: {tool_name}")
+    logger.debug(f"Arguments: {arguments}")
+    
+    # Get the tool function
+    tool_func = fastmcp_server.get_tool_function(tool_name)
+    if not tool_func:
+        logger.warning(f"Tool {tool_name} not found in FastMCP server")
+        return {
+            "status": "error",
+            "result": None,
+            "error": f"Tool {tool_name} not found or has no implementation"
+        }
+    
+    logger.info(f"Found tool function: {tool_func.__name__}")
+    
+    # Execute the tool
+    try:
+        # Call the function - it might be sync or async
+        import inspect
+        result = tool_func(**arguments)
+        
+        # Check if the result is a coroutine
+        if inspect.iscoroutine(result):
+            logger.debug(f"Tool {tool_name} returned a coroutine, awaiting...")
+            result = await result
+        
+        logger.debug(f"Tool {tool_name} returned result type: {type(result)}")
+        
+        # Check if result is a dict with coroutines
+        if isinstance(result, dict):
+            for key, value in result.items():
+                if inspect.iscoroutine(value):
+                    logger.warning(f"Result contains coroutine at key '{key}', awaiting...")
+                    result[key] = await value
+        
+        return {
+            "status": "success",
+            "result": result,
+            "error": None
+        }
+    except Exception as e:
+        logger.error(f"Error executing tool {tool_name}: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return {
+            "status": "error",
+            "result": None,
+            "error": str(e)
+        }
+
+# Add standard MCP endpoints using shared utilities with proper callbacks
+add_mcp_endpoints(
+    mcp_router, 
+    get_capabilities_func=get_capabilities_func,
+    get_tools_func=get_tools_func,
+    process_request_func=process_request_func,
+    component_manager_dependency=None  # We don't use component manager in Rhetor
+)
+
+
+# Debug endpoint to check registered tools
+@mcp_router.get("/debug/tools")
+async def debug_tools() -> Dict[str, Any]:
+    """Debug endpoint to check registered tools."""
+    return {
+        "server_name": fastmcp_server.name,
+        "server_version": fastmcp_server.version,
+        "tools_count": len(fastmcp_server._tools),
+        "tools": list(fastmcp_server._tools.keys()) if hasattr(fastmcp_server, '_tools') else [],
+        "tool_functions_count": len(fastmcp_server._tool_functions) if hasattr(fastmcp_server, '_tool_functions') else 0
+    }
 
 
 # Additional Rhetor-specific MCP endpoints

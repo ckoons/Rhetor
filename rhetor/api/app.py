@@ -9,6 +9,7 @@ import os
 import sys
 import asyncio
 import json
+import logging
 from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 from contextlib import asynccontextmanager
@@ -200,6 +201,34 @@ async def lifespan(app: FastAPI):
         logger.info("Initialized Hermes MCP Bridge for FastMCP tools")
     except Exception as e:
         logger.warning(f"Failed to initialize MCP Bridge: {e}")
+    
+    # Initialize MCP Tools Integration with live components
+    try:
+        from rhetor.core.mcp.init_integration import (
+            initialize_mcp_integration,
+            setup_hermes_subscriptions,
+            test_mcp_integration
+        )
+        
+        # Create the integration
+        mcp_integration = initialize_mcp_integration(
+            specialist_manager=ai_specialist_manager,
+            messaging_integration=ai_messaging_integration,
+            hermes_url=hermes_url
+        )
+        
+        # Set up Hermes subscriptions for cross-component messaging
+        await setup_hermes_subscriptions(mcp_integration)
+        
+        # Test the integration if in debug mode
+        if logger.isEnabledFor(logging.DEBUG):
+            await test_mcp_integration(mcp_integration)
+        
+        app.state.mcp_integration = mcp_integration
+        logger.info("MCP Tools Integration initialized with live components")
+        
+    except Exception as e:
+        logger.warning(f"Failed to initialize MCP Tools Integration: {e}")
     
     logger.info(f"Rhetor API initialized successfully on port {port}")
     

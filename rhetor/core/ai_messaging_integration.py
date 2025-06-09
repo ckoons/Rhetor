@@ -345,6 +345,25 @@ Has there been sufficient discussion to reach useful insights, or should the con
         
     async def _publish_to_hermes(self, topic: str, message: Dict[str, Any]):
         """Publish a message to Hermes message bus."""
+        # First try the message bus instance if available
+        if self.hermes_client and hasattr(self.hermes_client, 'publish'):
+            try:
+                success = await self.hermes_client.publish_async(
+                    topic=topic,
+                    message=message,
+                    headers={
+                        "component_id": "rhetor",
+                        "component_type": "rhetor",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
+                if success:
+                    logger.info(f"Successfully published message to topic {topic} via message bus")
+                    return
+            except Exception as e:
+                logger.warning(f"Failed to publish via message bus client: {e}, falling back to REST API")
+        
+        # Fallback to REST API
         if not self.session:
             logger.error("HTTP session not initialized")
             return
@@ -369,7 +388,7 @@ Has there been sufficient discussion to reach useful insights, or should the con
             
             async with self.session.post(url, json=payload, headers=headers) as resp:
                 if resp.status == 200:
-                    logger.info(f"Successfully published message to topic {topic}")
+                    logger.info(f"Successfully published message to topic {topic} via REST API")
                 else:
                     logger.error(f"Failed to publish to Hermes: {resp.status}")
                     

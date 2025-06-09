@@ -1290,7 +1290,20 @@ async def list_ai_specialists(
         Dictionary containing list of AI specialists
     """
     try:
-        # Mock specialist data - in production would query AISpecialistManager
+        # Try to use live integration if available
+        from .tools_integration import get_mcp_tools_integration
+        integration = get_mcp_tools_integration()
+        
+        if integration and integration.specialist_manager:
+            # Use live data from the integration
+            return await integration.list_ai_specialists(
+                filter_by_status=filter_by_status,
+                filter_by_type=filter_by_type,
+                filter_by_component=filter_by_component
+            )
+        
+        # Fallback to mock data if integration not available
+        logger.warning("MCP tools integration not available, using mock data")
         specialists = [
             {
                 "specialist_id": "rhetor-orchestrator",
@@ -1396,6 +1409,19 @@ async def activate_ai_specialist(
         Dictionary containing activation result
     """
     try:
+        # Try to use live integration if available
+        from .tools_integration import get_mcp_tools_integration
+        integration = get_mcp_tools_integration()
+        
+        if integration and integration.specialist_manager:
+            # Use live activation
+            return await integration.activate_ai_specialist(
+                specialist_id=specialist_id,
+                initialization_context=initialization_context
+            )
+        
+        # Fallback to mock data if integration not available
+        logger.warning("MCP tools integration not available, using mock activation")
         import random
         import time
         
@@ -1451,6 +1477,21 @@ async def send_message_to_specialist(
         Dictionary containing message result
     """
     try:
+        # Try to use live integration if available
+        from .tools_integration import get_mcp_tools_integration
+        integration = get_mcp_tools_integration()
+        
+        if integration and integration.messaging_integration:
+            # Use live messaging
+            return await integration.send_message_to_specialist(
+                specialist_id=specialist_id,
+                message=message,
+                context_id=context_id,
+                message_type=message_type
+            )
+        
+        # Fallback to mock data if integration not available
+        logger.warning("MCP tools integration not available, using mock messaging")
         import uuid
         from datetime import datetime
         
@@ -1514,6 +1555,22 @@ async def orchestrate_team_chat(
         Dictionary containing team chat results
     """
     try:
+        # Try to use live integration if available
+        from .tools_integration import get_mcp_tools_integration
+        integration = get_mcp_tools_integration()
+        
+        if integration and integration.messaging_integration:
+            # Use live orchestration
+            return await integration.orchestrate_team_chat(
+                topic=topic,
+                specialists=specialists,
+                initial_prompt=initial_prompt,
+                max_rounds=max_rounds,
+                orchestration_style=orchestration_style
+            )
+        
+        # Fallback to mock data if integration not available
+        logger.warning("MCP tools integration not available, using mock team chat")
         from datetime import datetime
         import random
         
@@ -1614,6 +1671,20 @@ async def get_specialist_conversation_history(
         Dictionary containing conversation history
     """
     try:
+        # Try to use live integration if available
+        from .tools_integration import get_mcp_tools_integration
+        integration = get_mcp_tools_integration()
+        
+        if integration and integration.specialist_manager:
+            # Use live history
+            return await integration.get_specialist_conversation_history(
+                specialist_id=specialist_id,
+                conversation_id=conversation_id,
+                limit=limit
+            )
+        
+        # Fallback to mock data if integration not available
+        logger.warning("MCP tools integration not available, using mock history")
         from datetime import datetime, timedelta
         import random
         
@@ -1668,6 +1739,19 @@ async def configure_ai_orchestration(
         Dictionary containing configuration result
     """
     try:
+        # Try to use live integration if available
+        from .tools_integration import get_mcp_tools_integration
+        integration = get_mcp_tools_integration()
+        
+        if integration and integration.specialist_manager:
+            # Use live configuration
+            return await integration.configure_ai_orchestration(
+                settings=settings,
+                apply_immediately=apply_immediately
+            )
+        
+        # Fallback to mock data if integration not available
+        logger.warning("MCP tools integration not available, using mock configuration")
         # Validate settings
         valid_settings = {
             "message_filtering": ["enabled", "disabled"],
