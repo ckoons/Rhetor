@@ -114,16 +114,19 @@ class RhetorMCPBridge(MCPService):
         # Register with Hermes
         if self.hermes_client:
             try:
+                # Don't pass the handler function to avoid circular references
+                # Hermes will call back to us via MCP when the tool is invoked
                 await self.hermes_client.register_tool(
                     name=tool_name,
                     description=fastmcp_tool.get('description', ''),
                     input_schema=fastmcp_tool.get('input_schema', {}),
                     output_schema=fastmcp_tool.get('output_schema', {}),
-                    handler=handler,
+                    handler=None,  # Don't pass handler to avoid recursion
                     metadata={
                         'category': fastmcp_tool.get('category', 'general'),
                         'tags': fastmcp_tool.get('tags', []),
-                        'fastmcp': True
+                        'fastmcp': True,
+                        'component': self.component_name
                     }
                 )
                 logger.info(f"Registered tool {tool_name} with Hermes")
@@ -144,8 +147,11 @@ class RhetorMCPBridge(MCPService):
                 description=tool.description,
                 input_schema=tool.get_input_schema(),
                 output_schema=getattr(tool, "output_schema", {}),
-                handler=tool,  # The tool itself is callable
-                metadata=tool.get_metadata()
+                handler=None,  # Don't pass handler to avoid recursion
+                metadata={
+                    **tool.get_metadata(),
+                    'component': self.component_name
+                }
             )
             logger.info(f"Registered tool {tool_name} with Hermes")
         except Exception as e:

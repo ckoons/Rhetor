@@ -1901,35 +1901,48 @@ def get_all_tools(component_manager=None):
         
     tools = []
     
+    # Helper function to safely extract tool metadata
+    def safe_tool_dict(tool_func):
+        """Extract tool metadata without circular references."""
+        meta = tool_func._mcp_tool_meta
+        return {
+            'name': meta.name,
+            'description': meta.description,
+            'tags': meta.tags if hasattr(meta, 'tags') else [],
+            'category': meta.category if hasattr(meta, 'category') else 'general',
+            'input_schema': meta.parameters if hasattr(meta, 'parameters') else {},
+            'output_schema': {}
+        }
+    
     # LLM Management tools
-    tools.append(get_available_models._mcp_tool_meta.to_dict())
-    tools.append(set_default_model._mcp_tool_meta.to_dict())
-    tools.append(get_model_capabilities._mcp_tool_meta.to_dict())
-    tools.append(test_model_connection._mcp_tool_meta.to_dict())
-    tools.append(get_model_performance._mcp_tool_meta.to_dict())
-    tools.append(manage_model_rotation._mcp_tool_meta.to_dict())
+    tools.append(safe_tool_dict(get_available_models))
+    tools.append(safe_tool_dict(set_default_model))
+    tools.append(safe_tool_dict(get_model_capabilities))
+    tools.append(safe_tool_dict(test_model_connection))
+    tools.append(safe_tool_dict(get_model_performance))
+    tools.append(safe_tool_dict(manage_model_rotation))
     
     # Prompt Engineering tools
-    tools.append(create_prompt_template._mcp_tool_meta.to_dict())
-    tools.append(optimize_prompt._mcp_tool_meta.to_dict())
-    tools.append(validate_prompt_syntax._mcp_tool_meta.to_dict())
-    tools.append(get_prompt_history._mcp_tool_meta.to_dict())
-    tools.append(analyze_prompt_performance._mcp_tool_meta.to_dict())
-    tools.append(manage_prompt_library._mcp_tool_meta.to_dict())
+    tools.append(safe_tool_dict(create_prompt_template))
+    tools.append(safe_tool_dict(optimize_prompt))
+    tools.append(safe_tool_dict(validate_prompt_syntax))
+    tools.append(safe_tool_dict(get_prompt_history))
+    tools.append(safe_tool_dict(analyze_prompt_performance))
+    tools.append(safe_tool_dict(manage_prompt_library))
     
     # Context Management tools
-    tools.append(analyze_context_usage._mcp_tool_meta.to_dict())
-    tools.append(optimize_context_window._mcp_tool_meta.to_dict())
-    tools.append(track_context_history._mcp_tool_meta.to_dict())
-    tools.append(compress_context._mcp_tool_meta.to_dict())
+    tools.append(safe_tool_dict(analyze_context_usage))
+    tools.append(safe_tool_dict(optimize_context_window))
+    tools.append(safe_tool_dict(track_context_history))
+    tools.append(safe_tool_dict(compress_context))
     
     # AI Orchestration tools
-    tools.append(list_ai_specialists._mcp_tool_meta.to_dict())
-    tools.append(activate_ai_specialist._mcp_tool_meta.to_dict())
-    tools.append(send_message_to_specialist._mcp_tool_meta.to_dict())
-    tools.append(orchestrate_team_chat._mcp_tool_meta.to_dict())
-    tools.append(get_specialist_conversation_history._mcp_tool_meta.to_dict())
-    tools.append(configure_ai_orchestration._mcp_tool_meta.to_dict())
+    tools.append(safe_tool_dict(list_ai_specialists))
+    tools.append(safe_tool_dict(activate_ai_specialist))
+    tools.append(safe_tool_dict(send_message_to_specialist))
+    tools.append(safe_tool_dict(orchestrate_team_chat))
+    tools.append(safe_tool_dict(get_specialist_conversation_history))
+    tools.append(safe_tool_dict(configure_ai_orchestration))
     
     logger.info(f"get_all_tools returning {len(tools)} Rhetor MCP tools")
     return tools

@@ -119,7 +119,6 @@ def get_tools_func(component_manager=None):
     
     # Get tools from the FastMCP server
     server_tools = fastmcp_server._tools
-    logger.info(f"FastMCP server has {len(server_tools)} tools registered")
     
     for tool_name, tool_meta in server_tools.items():
         # The tool_meta is the MCPTool object registered with the server
@@ -131,9 +130,7 @@ def get_tools_func(component_manager=None):
             "category": tool_meta.category if hasattr(tool_meta, 'category') else 'general'
         }
         tools.append(tool_dict)
-        logger.debug(f"Added tool: {tool_dict['name']}")
     
-    logger.info(f"get_tools_func returning {len(tools)} tools")
     return tools
 
 async def process_request_func(request_data: Dict[str, Any], component_manager=None):
@@ -142,7 +139,6 @@ async def process_request_func(request_data: Dict[str, Any], component_manager=N
     arguments = request_data.get("arguments", {})
     
     logger.info(f"Processing MCP request for tool: {tool_name}")
-    logger.debug(f"Arguments: {arguments}")
     
     # Get the tool function
     tool_func = fastmcp_server.get_tool_function(tool_name)
@@ -154,8 +150,6 @@ async def process_request_func(request_data: Dict[str, Any], component_manager=N
             "error": f"Tool {tool_name} not found or has no implementation"
         }
     
-    logger.info(f"Found tool function: {tool_func.__name__}")
-    
     # Execute the tool
     try:
         # Call the function - it might be sync or async
@@ -164,16 +158,12 @@ async def process_request_func(request_data: Dict[str, Any], component_manager=N
         
         # Check if the result is a coroutine
         if inspect.iscoroutine(result):
-            logger.debug(f"Tool {tool_name} returned a coroutine, awaiting...")
             result = await result
-        
-        logger.debug(f"Tool {tool_name} returned result type: {type(result)}")
         
         # Check if result is a dict with coroutines
         if isinstance(result, dict):
             for key, value in result.items():
                 if inspect.iscoroutine(value):
-                    logger.warning(f"Result contains coroutine at key '{key}', awaiting...")
                     result[key] = await value
         
         return {
@@ -183,8 +173,6 @@ async def process_request_func(request_data: Dict[str, Any], component_manager=N
         }
     except Exception as e:
         logger.error(f"Error executing tool {tool_name}: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
         return {
             "status": "error",
             "result": None,
@@ -199,19 +187,6 @@ add_mcp_endpoints(
     process_request_func=process_request_func,
     component_manager_dependency=None  # We don't use component manager in Rhetor
 )
-
-
-# Debug endpoint to check registered tools
-@mcp_router.get("/debug/tools")
-async def debug_tools() -> Dict[str, Any]:
-    """Debug endpoint to check registered tools."""
-    return {
-        "server_name": fastmcp_server.name,
-        "server_version": fastmcp_server.version,
-        "tools_count": len(fastmcp_server._tools),
-        "tools": list(fastmcp_server._tools.keys()) if hasattr(fastmcp_server, '_tools') else [],
-        "tool_functions_count": len(fastmcp_server._tool_functions) if hasattr(fastmcp_server, '_tool_functions') else 0
-    }
 
 
 # Additional Rhetor-specific MCP endpoints
