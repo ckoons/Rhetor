@@ -3,16 +3,25 @@ Helper module for registering with Hermes service registry.
 """
 
 import os
+import sys
 import logging
 import json
 import asyncio
 from pathlib import Path
 import aiohttp
 
+# Add Tekton root to path for shared imports
+tekton_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+if tekton_root not in sys.path:
+    sys.path.append(tekton_root)
+
+from shared.utils.env_config import get_component_config
+
 logger = logging.getLogger(__name__)
 
 HERMES_API_URL = os.environ.get("HERMES_API_URL", "http://localhost:8100")
-RHETOR_PORT = int(os.environ.get("RHETOR_PORT", 8003))
+config = get_component_config()
+RHETOR_PORT = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT"))
 
 # Check if this is running in the Tekton environment
 TEKTON_ROOT = Path(__file__).parent.parent.parent.parent

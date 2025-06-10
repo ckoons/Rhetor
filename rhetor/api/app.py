@@ -95,7 +95,7 @@ async def lifespan(app: FastAPI):
     
     # Get configuration
     config = get_component_config()
-    port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT", 8003))
+    port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT"))
     
     try:
         # Initialize LLM client with timeout
@@ -456,7 +456,7 @@ async def health():
     
     # Get port from config
     config = get_component_config()
-    port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT", 8003))
+    port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT"))
     
     return create_health_response(
         component_name="rhetor",
