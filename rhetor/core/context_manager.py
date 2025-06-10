@@ -368,6 +368,11 @@ class ContextManager:
         )
         self.persistence_dir = os.environ.get("RHETOR_CONTEXT_DIR", default_context_dir)
         os.makedirs(self.persistence_dir, exist_ok=True)
+        
+        # Track loading stats to avoid excessive logging
+        self._last_load_log_time = 0
+        self._total_loads = 0
+        self._contexts_loaded = False
     
     async def initialize(self) -> None:
         """Initialize the context manager with clients and load contexts."""
@@ -817,7 +822,19 @@ class ContextManager:
         except Exception as e:
             logger.warning(f"Error loading contexts from directory: {e}")
         
-        logger.info(f"Loaded {count} contexts from local files")
+        # Update load tracking
+        self._total_loads += 1
+        self._contexts_loaded = True
+        
+        # Only log at INFO level once per hour or on first load
+        current_time = datetime.now().timestamp()
+        if self._total_loads == 1 or (current_time - self._last_load_log_time) >= 3600:
+            logger.info(f"Loaded {count} contexts from local files (total loads: {self._total_loads})")
+            self._last_load_log_time = current_time
+        else:
+            # Use debug level for routine loads
+            logger.debug(f"Loaded {count} contexts from local files")
+        
         return count
     
     async def delete_context(self, context_id: str) -> bool:
