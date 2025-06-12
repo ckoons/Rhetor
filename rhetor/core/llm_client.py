@@ -118,6 +118,14 @@ class LLMClient:
         ]
         logger.info(f"Available providers: {available_providers}")
     
+    @property
+    def is_initialized(self):
+        """Check if the LLM client has been initialized with providers."""
+        return bool(self.providers) and (
+            self.default_provider_id is None or 
+            self.default_provider_id in self.providers
+        )
+    
     def get_provider(self, provider_id=None):
         """
         Get a provider by ID.

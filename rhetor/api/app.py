@@ -10,6 +10,7 @@ import sys
 import asyncio
 import json
 import logging
+import time
 from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 from contextlib import asynccontextmanager
@@ -61,7 +62,7 @@ from ..templates import system_prompts
 logger = setup_component_logging("rhetor")
 
 # Component configuration
-COMPONENT_NAME = "Rhetor"
+COMPONENT_NAME = "rhetor"
 COMPONENT_VERSION = "0.1.0"
 COMPONENT_DESCRIPTION = "LLM orchestration and management service"
 
@@ -80,198 +81,254 @@ anthropic_max_config = None
 start_time = None
 is_registered_with_hermes = False
 
+# Global variables for Hermes registration and heartbeat
+hermes_registration = None
+heartbeat_task = None
+mcp_bridge = None
+rhetor_port = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for Rhetor"""
-    global llm_client, model_router, specialist_router, ai_specialist_manager, ai_messaging_integration, context_manager, prompt_engine, template_manager, prompt_registry, budget_manager, anthropic_max_config, start_time, is_registered_with_hermes
-    
-    # Track startup time
-    import time
-    start_time = time.time()
+    global llm_client, model_router, specialist_router, ai_specialist_manager, ai_messaging_integration
+    global context_manager, prompt_engine, template_manager, prompt_registry, budget_manager
+    global anthropic_max_config, start_time, is_registered_with_hermes
+    global hermes_registration, heartbeat_task, mcp_bridge, rhetor_port
     
     # Startup
     logger.info("Starting Rhetor initialization...")
     
-    # Get configuration
-    config = get_component_config()
-    port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT"))
+    async def rhetor_startup():
+        """Initialize Rhetor components"""
+        global llm_client, model_router, specialist_router, ai_specialist_manager, ai_messaging_integration
+        global context_manager, prompt_engine, template_manager, prompt_registry, budget_manager
+        global anthropic_max_config, start_time, is_registered_with_hermes
+        global hermes_registration, heartbeat_task, mcp_bridge, rhetor_port
+        
+        try:
+            # Track startup time
+            import time
+            start_time = time.time()
+            
+            # Get configuration
+            config = get_component_config()
+            port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT"))
+            rhetor_port = port  # Store globally for health check
+            
+            # Register with Hermes
+            hermes_registration = HermesRegistration()
+            hermes_url = os.environ.get("HERMES_URL", "http://localhost:8001")
+            
+            try:
+                is_registered_with_hermes = await hermes_registration.register_component(
+                    component_name="rhetor",
+                    port=port,
+                    version="0.1.0",
+                    capabilities=["llm_orchestration", "template_management", "prompt_engineering"],
+                    metadata={"description": "LLM orchestration and management service"}
+                )
+                
+                if is_registered_with_hermes:
+                    logger.info("Successfully registered with Hermes")
+                    
+                    # Start heartbeat task
+                    heartbeat_task = asyncio.create_task(
+                        heartbeat_loop(hermes_registration, "rhetor", interval=30)
+                    )
+                    logger.info("Started Hermes heartbeat task")
+                    
+                    # Store registration in app state
+                    app.state.hermes_registration = hermes_registration
+                else:
+                    logger.warning("Failed to register with Hermes")
+            except Exception as e:
+                logger.warning(f"Error during Hermes registration: {e}")
+            
+            # Initialize core components
+            llm_client = LLMClient()
+            logger.info("LLM client initialized successfully")
+            
+            # Initialize template manager first
+            template_data_dir = os.path.join(
+                os.environ.get('TEKTON_DATA_DIR', 
+                              os.path.join(os.environ.get('TEKTON_ROOT', os.path.expanduser('~')), '.tekton', 'data')),
+                'rhetor', 'templates'
+            )
+            template_manager = TemplateManager(template_data_dir)
+            logger.info("Template manager initialized")
+            
+            # Initialize prompt registry
+            prompt_data_dir = os.path.join(
+                os.environ.get('TEKTON_DATA_DIR',
+                              os.path.join(os.environ.get('TEKTON_ROOT', os.path.expanduser('~')), '.tekton', 'data')),
+                'rhetor', 'prompts'
+            )
+            prompt_registry = PromptRegistry(prompt_data_dir)
+            logger.info("Prompt registry initialized")
+            
+            # Initialize enhanced context manager with token counting
+            context_manager = ContextManager(llm_client=llm_client)
+            logger.info("Initializing context manager...")
+            await asyncio.wait_for(context_manager.initialize(), timeout=5.0)
+            logger.info("Context manager initialized successfully")
+            
+            # Initialize Anthropic Max configuration
+            anthropic_max_config = AnthropicMaxConfig()
+            logger.info(f"Anthropic Max configuration initialized - enabled: {anthropic_max_config.enabled}")
+            
+            # Initialize budget manager for cost tracking and budget enforcement
+            budget_manager = BudgetManager()
+            
+            # Apply Anthropic Max budget override if enabled
+            if anthropic_max_config.enabled:
+                max_budget = anthropic_max_config.get_budget_override()
+                if max_budget:
+                    logger.info("Applying Anthropic Max budget override - unlimited tokens")
+                    # Budget manager will still track usage but not enforce limits
+            
+            logger.info("Budget manager initialized")
+            
+            # Initialize model router with budget manager
+            model_router = ModelRouter(llm_client, budget_manager=budget_manager)
+            logger.info("Model router initialized")
+            
+            # Initialize specialist router for AI specialist management
+            specialist_router = SpecialistRouter(llm_client, budget_manager=budget_manager)
+            logger.info("Specialist router initialized")
+            
+            # Initialize AI specialist manager
+            ai_specialist_manager = AISpecialistManager(llm_client, specialist_router)
+            specialist_router.set_specialist_manager(ai_specialist_manager)
+            logger.info("AI specialist manager initialized")
+            
+            # Start core AI specialists
+            try:
+                core_results = await ai_specialist_manager.start_core_specialists()
+                logger.info(f"Core AI specialists started: {core_results}")
+            except Exception as e:
+                logger.warning(f"Failed to start core AI specialists: {e}")
+            
+            # Initialize AI messaging integration with Hermes
+            ai_messaging_integration = AIMessagingIntegration(ai_specialist_manager, hermes_url, specialist_router)
+            try:
+                await ai_messaging_integration.initialize()
+                logger.info("AI messaging integration initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize AI messaging integration: {e}")
+            
+            # Initialize prompt engine with template manager integration
+            prompt_engine = PromptEngine(template_manager)
+            logger.info("Prompt engine initialized")
+            
+            # Initialize Hermes MCP Bridge
+            try:
+                from rhetor.core.mcp.hermes_bridge import RhetorMCPBridge
+                mcp_bridge = RhetorMCPBridge(llm_client)
+                await mcp_bridge.initialize()
+                app.state.mcp_bridge = mcp_bridge
+                logger.info("Initialized Hermes MCP Bridge for FastMCP tools")
+            except Exception as e:
+                logger.warning(f"Failed to initialize MCP Bridge: {e}")
+            
+            # Initialize MCP Tools Integration with live components
+            try:
+                from rhetor.core.mcp.init_integration import (
+                    initialize_mcp_integration,
+                    setup_hermes_subscriptions,
+                    test_mcp_integration
+                )
+                
+                # Create the integration
+                mcp_integration = initialize_mcp_integration(
+                    specialist_manager=ai_specialist_manager,
+                    messaging_integration=ai_messaging_integration,
+                    hermes_url=hermes_url
+                )
+                
+                # Set up Hermes subscriptions for cross-component messaging
+                await setup_hermes_subscriptions(mcp_integration)
+                
+                # Test the integration if in debug mode
+                if logger.isEnabledFor(logging.DEBUG):
+                    await test_mcp_integration(mcp_integration)
+                
+                app.state.mcp_integration = mcp_integration
+                logger.info("MCP Tools Integration initialized with live components")
+                
+            except Exception as e:
+                logger.warning(f"Failed to initialize MCP Tools Integration: {e}")
+            
+            logger.info(f"Rhetor API initialized successfully on port {port}")
+            
+        except Exception as e:
+            logger.error(f"Error during Rhetor startup: {e}", exc_info=True)
+            raise StartupError(str(e), "rhetor", "STARTUP_FAILED")
     
+    # Execute startup with metrics
     try:
-        # Initialize LLM client with timeout
-        llm_client = LLMClient()
-        logger.info("Initializing LLM client...")
-        await asyncio.wait_for(llm_client.initialize(), timeout=10.0)
-        logger.info("LLM client initialized successfully")
-    
-        # Initialize template manager
-        template_manager = TemplateManager()
-        logger.info("Template manager initialized")
-        
-        # Initialize prompt registry and connect to template manager
-        prompt_registry = system_prompts.get_registry()
-        logger.info("Prompt registry initialized")
-        
-        # Initialize enhanced context manager with token counting
-        context_manager = ContextManager(llm_client=llm_client)
-        logger.info("Initializing context manager...")
-        await asyncio.wait_for(context_manager.initialize(), timeout=5.0)
-        logger.info("Context manager initialized successfully")
-        
-        # Initialize Anthropic Max configuration
-        anthropic_max_config = AnthropicMaxConfig()
-        logger.info(f"Anthropic Max configuration initialized - enabled: {anthropic_max_config.enabled}")
-        
-        # Initialize budget manager for cost tracking and budget enforcement
-        budget_manager = BudgetManager()
-        
-        # Apply Anthropic Max budget override if enabled
-        if anthropic_max_config.enabled:
-            max_budget = anthropic_max_config.get_budget_override()
-            if max_budget:
-                logger.info("Applying Anthropic Max budget override - unlimited tokens")
-                # Budget manager will still track usage but not enforce limits
-        
-        logger.info("Budget manager initialized")
-        
-    except asyncio.TimeoutError:
-        logger.error("Timeout during Rhetor initialization")
-        raise StartupError("Timeout during Rhetor initialization")
+        metrics = await component_startup("rhetor", rhetor_startup, timeout=30)
+        logger.info(f"Rhetor started successfully in {metrics.total_time:.2f}s")
     except Exception as e:
-        logger.error(f"Error during Rhetor startup: {e}")
-        raise StartupError(f"Error during Rhetor startup: {e}")
+        logger.error(f"Failed to start Rhetor: {e}")
+        raise
     
-    # Initialize model router with budget manager
-    model_router = ModelRouter(llm_client, budget_manager=budget_manager)
-    logger.info("Model router initialized")
+    # Create shutdown handler
+    shutdown = GracefulShutdown("rhetor")
     
-    # Initialize specialist router for AI specialist management
-    specialist_router = SpecialistRouter(llm_client, budget_manager=budget_manager)
-    logger.info("Specialist router initialized")
-    
-    # Initialize AI specialist manager
-    ai_specialist_manager = AISpecialistManager(llm_client, specialist_router)
-    specialist_router.set_specialist_manager(ai_specialist_manager)
-    logger.info("AI specialist manager initialized")
-    
-    # Start core AI specialists
-    try:
-        core_results = await ai_specialist_manager.start_core_specialists()
-        logger.info(f"Core AI specialists started: {core_results}")
-    except Exception as e:
-        logger.warning(f"Failed to start core AI specialists: {e}")
-    
-    # Initialize AI messaging integration with Hermes
-    hermes_url = os.environ.get("HERMES_URL", "http://localhost:8001")
-    ai_messaging_integration = AIMessagingIntegration(ai_specialist_manager, hermes_url, specialist_router)
-    try:
-        await ai_messaging_integration.initialize()
-        logger.info("AI messaging integration initialized")
-    except Exception as e:
-        logger.warning(f"Failed to initialize AI messaging integration: {e}")
-    
-    # Initialize prompt engine with template manager integration
-    prompt_engine = PromptEngine(template_manager)
-    logger.info("Prompt engine initialized")
-    
-    # Register with Hermes
-    hermes_registration = HermesRegistration()
-    is_registered_with_hermes = await hermes_registration.register_component(
-        component_name="rhetor",
-        port=port,
-        version=COMPONENT_VERSION,
-        capabilities=["llm_routing", "prompt_management", "context_management", "budget_tracking"],
-        metadata={
-            "description": "LLM orchestration and management",
-            "category": "ai"
-        }
-    )
-    app.state.hermes_registration = hermes_registration
-    
-    # Start heartbeat task
-    if hermes_registration.is_registered:
-        heartbeat_task = asyncio.create_task(heartbeat_loop(hermes_registration, "rhetor"))
-    
-    # Initialize Hermes MCP Bridge
-    try:
-        from rhetor.core.mcp.hermes_bridge import RhetorMCPBridge
-        mcp_bridge = RhetorMCPBridge(llm_client)
-        await mcp_bridge.initialize()
-        app.state.mcp_bridge = mcp_bridge
-        logger.info("Initialized Hermes MCP Bridge for FastMCP tools")
-    except Exception as e:
-        logger.warning(f"Failed to initialize MCP Bridge: {e}")
-    
-    # Initialize MCP Tools Integration with live components
-    try:
-        from rhetor.core.mcp.init_integration import (
-            initialize_mcp_integration,
-            setup_hermes_subscriptions,
-            test_mcp_integration
-        )
+    # Register cleanup tasks
+    async def cleanup_hermes():
+        """Cleanup Hermes registration"""
+        if heartbeat_task:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
         
-        # Create the integration
-        mcp_integration = initialize_mcp_integration(
-            specialist_manager=ai_specialist_manager,
-            messaging_integration=ai_messaging_integration,
-            hermes_url=hermes_url
-        )
-        
-        # Set up Hermes subscriptions for cross-component messaging
-        await setup_hermes_subscriptions(mcp_integration)
-        
-        # Test the integration if in debug mode
-        if logger.isEnabledFor(logging.DEBUG):
-            await test_mcp_integration(mcp_integration)
-        
-        app.state.mcp_integration = mcp_integration
-        logger.info("MCP Tools Integration initialized with live components")
-        
-    except Exception as e:
-        logger.warning(f"Failed to initialize MCP Tools Integration: {e}")
+        if hermes_registration and hermes_registration.is_registered:
+            await hermes_registration.deregister("rhetor")
+            logger.info("Deregistered from Hermes")
     
-    logger.info(f"Rhetor API initialized successfully on port {port}")
+    async def cleanup_components():
+        """Cleanup Rhetor components"""
+        try:
+            if ai_messaging_integration:
+                await ai_messaging_integration.cleanup()
+                logger.info("AI messaging integration cleaned up")
+            
+            if context_manager:
+                await context_manager.cleanup()
+                logger.info("Context manager cleaned up")
+            
+            if llm_client:
+                await llm_client.cleanup()
+                logger.info("LLM client cleaned up")
+        except Exception as e:
+            logger.warning(f"Error cleaning up Rhetor components: {e}")
+    
+    async def cleanup_mcp_bridge():
+        """Cleanup MCP bridge"""
+        global mcp_bridge
+        if mcp_bridge:
+            try:
+                await mcp_bridge.shutdown()
+                logger.info("MCP bridge cleaned up")
+            except Exception as e:
+                logger.warning(f"Error cleaning up MCP bridge: {e}")
+    
+    shutdown.register_cleanup(cleanup_hermes)
+    shutdown.register_cleanup(cleanup_components)
+    shutdown.register_cleanup(cleanup_mcp_bridge)
     
     yield
     
     # Shutdown
-    logger.info("Shutting down Rhetor...")
+    logger.info("Shutting down Rhetor LLM Orchestration API")
+    await shutdown.shutdown_sequence(timeout=10)
     
-    # Cancel heartbeat task if running
-    if hermes_registration.is_registered and 'heartbeat_task' in locals():
-        heartbeat_task.cancel()
-        try:
-            await heartbeat_task
-        except asyncio.CancelledError:
-            pass
-    
-    # Cleanup components
-    if ai_messaging_integration:
-        await ai_messaging_integration.cleanup()
-        logger.info("AI messaging integration cleaned up")
-    
-    if context_manager:
-        await context_manager.cleanup()
-    
-    if llm_client:
-        await llm_client.cleanup()
-    
-    # Cleanup MCP bridge
-    if hasattr(app.state, "mcp_bridge") and app.state.mcp_bridge:
-        try:
-            await app.state.mcp_bridge.shutdown()
-            logger.info("MCP bridge cleaned up")
-        except Exception as e:
-            logger.warning(f"Error cleaning up MCP bridge: {e}")
-    
-    # Deregister from Hermes
-    if hasattr(app.state, "hermes_registration") and app.state.hermes_registration:
-        await app.state.hermes_registration.deregister("rhetor")
-    
-    # Give sockets time to close on macOS
+    # Socket release delay for macOS
     await asyncio.sleep(0.5)
-    
-    logger.info("Rhetor shutdown complete")
 
 
 # Initialize FastAPI app with standard configuration
@@ -303,7 +360,7 @@ except ImportError as e:
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For development - restrict in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -312,1542 +369,47 @@ app.add_middleware(
 # Create standard routers
 routers = create_standard_routers(COMPONENT_NAME)
 
-# Request models
-class MessageRequest(TektonBaseModel):
-    message: str
-    context_id: str = "default"
-    task_type: str = "default"
-    component: Optional[str] = None
-    streaming: bool = False
-    options: Optional[Dict[str, Any]] = None
-    prompt_id: Optional[str] = None
 
-class StreamRequest(TektonBaseModel):
-    message: str
-    context_id: str = "default"
-    task_type: str = "default"
-    component: Optional[str] = None
-    options: Optional[Dict[str, Any]] = None
-    prompt_id: Optional[str] = None
-
-class ChatRequest(TektonBaseModel):
-    messages: List[Dict[str, str]]
-    context_id: str = "default"
-    task_type: str = "default"
-    component: Optional[str] = None
-    streaming: bool = False
-    options: Optional[Dict[str, Any]] = None
-    prompt_id: Optional[str] = None
-
-class ProviderModelRequest(TektonBaseModel):
-    provider_id: str
-    model_id: str
-
-# Template and prompt management models
-class TemplateCreateRequest(TektonBaseModel):
-    name: str
-    content: str
-    category: str = "general"
-    description: Optional[str] = None
-    tags: Optional[List[str]] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-class TemplateUpdateRequest(TektonBaseModel):
-    content: str
-    metadata: Optional[Dict[str, Any]] = None
-
-class TemplateRenderRequest(TektonBaseModel):
-    template_id: str
-    variables: Dict[str, Any]
-    version_id: Optional[str] = None
-
-class PromptCreateRequest(TektonBaseModel):
-    name: str
-    component: str
-    content: str
-    description: Optional[str] = None
-    tags: Optional[List[str]] = None
-    is_default: bool = False
-    parent_id: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-class PromptUpdateRequest(TektonBaseModel):
-    content: str
-    metadata: Optional[Dict[str, Any]] = None
-
-class PromptCompareRequest(TektonBaseModel):
-    prompt_id1: str
-    prompt_id2: str
-    
-# Budget management models
-class BudgetLimitRequest(TektonBaseModel):
-    period: str  # daily, weekly, monthly
-    limit_amount: float
-    provider: str = "all"
-    enforcement: Optional[str] = None  # ignore, warn, enforce
-    
-class BudgetPolicyRequest(TektonBaseModel):
-    period: str  # daily, weekly, monthly
-    policy: str  # ignore, warn, enforce
-    provider: str = "all"
-
+# Root endpoint
 @routers.root.get("/")
 async def root():
-    """Root endpoint - provides basic information"""
-    providers = {}
-    if llm_client:
-        providers = llm_client.get_all_providers()
-    
-    # Get template and prompt info if available
-    template_info = {}
-    prompt_info = {}
-    if template_manager:
-        template_categories = template_manager.get_categories()
-        template_count = template_manager.count_templates()
-        template_info = {
-            "categories": template_categories,
-            "count": template_count
-        }
-    
-    if prompt_registry:
-        prompt_components = prompt_registry.get_components()
-        prompt_count = prompt_registry.count_prompts()
-        prompt_info = {
-            "components": prompt_components,
-            "count": prompt_count
-        }
-    
-    # Get budget info if available
-    budget_info = {}
-    if budget_manager:
-        daily_usage = budget_manager.get_current_usage_total(BudgetPeriod.DAILY)
-        daily_limit = budget_manager.get_budget_limit(BudgetPeriod.DAILY)
-        
-        budget_info = {
-            "daily_usage": daily_usage,
-            "daily_limit": daily_limit,
-            "budget_enabled": True
-        }
-    
+    """Root endpoint providing basic API information."""
     return {
-        "name": f"{COMPONENT_NAME} LLM Manager",
+        "name": f"{COMPONENT_NAME} LLM Orchestration API",
         "version": COMPONENT_VERSION,
         "status": "running",
         "description": COMPONENT_DESCRIPTION,
-        "endpoints": [
-            "/message", "/stream", "/chat", "/ws", "/providers", "/health", 
-            "/templates", "/prompts", "/contexts", "/budget"
-        ],
-        "providers": providers,
-        "templates": template_info,
-        "prompts": prompt_info,
-        "budget": budget_info,
-        "docs": "/api/v1/docs"
+        "documentation": "/api/v1/docs"
     }
 
+
+# Health check endpoint
 @routers.root.get("/health")
-async def health():
-    """Health check endpoint following Tekton standards"""
-    provider_status = {}
-    if llm_client:
-        providers = llm_client.get_all_providers()
-        for provider_id, provider_info in providers.items():
-            provider_status[provider_id] = provider_info["available"]
-    
-    # Get port from config
-    config = get_component_config()
-    port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT"))
-    
-    return create_health_response(
-        component_name="rhetor",
-        port=port,
-        version=COMPONENT_VERSION,
-        status="healthy",
-        registered=is_registered_with_hermes,
-        details={
-            "message": "Rhetor is running normally",
-            "providers": provider_status
-        }
-    )
-
-@app.get("/providers")
-async def providers():
-    """Get available LLM providers and models"""
-    if not llm_client:
-        raise HTTPException(status_code=503, detail="LLM client not initialized")
-    
-    all_providers = llm_client.get_all_providers()
-    
-    return {
-        "providers": all_providers,
-        "default_provider": llm_client.default_provider_id,
-        "default_model": llm_client.default_model
-    }
-
-@app.post("/provider")
-async def set_provider(request: ProviderModelRequest):
-    """Set the active provider and model"""
-    if not llm_client:
-        raise HTTPException(status_code=503, detail="LLM client not initialized")
-    
+async def health_check():
+    """Check the health of the Rhetor service following Tekton standards."""
     try:
-        provider = llm_client.get_provider(request.provider_id)
-        
-        # Check if model is available
-        available_models = provider.get_available_models()
-        model_ids = [model["id"] for model in available_models]
-        
-        if request.model_id not in model_ids:
-            raise ValueError(f"Model {request.model_id} not available from provider {request.provider_id}")
-        
-        # Set as default
-        llm_client.default_provider_id = request.provider_id
-        llm_client.default_model = request.model_id
-        
-        return {
-            "success": True,
-            "provider": request.provider_id,
-            "model": request.model_id
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-@app.post("/message")
-async def message(request: MessageRequest):
-    """Send a message to the LLM and get a response"""
-    if not model_router or not context_manager:
-        raise HTTPException(status_code=503, detail="Rhetor components not initialized")
-    
-    try:
-        # Get or create system prompt
-        system_prompt = prompt_engine.get_system_prompt(
-            component=request.component or request.context_id.split(":")[0] if ":" in request.context_id else None
-        )
-        
-        # Add user message to context
-        await context_manager.add_to_context(
-            context_id=request.context_id,
-            role="user",
-            content=request.message,
-            metadata={"task_type": request.task_type}
-        )
-        
-        # Route to appropriate model
-        response = await model_router.route_request(
-            message=request.message,
-            context_id=request.context_id,
-            task_type=request.task_type,
-            component=request.component,
-            system_prompt=system_prompt,
-            streaming=request.streaming,
-            override_config=request.options
-        )
-        
-        # Add response to context if not streaming
-        if not request.streaming and "message" in response and not response.get("error"):
-            await context_manager.add_to_context(
-                context_id=request.context_id,
-                role="assistant",
-                content=response["message"],
-                metadata={
-                    "model": response.get("model"),
-                    "provider": response.get("provider"),
-                    "task_type": request.task_type
-                }
-            )
-        
-        return response
-    except Exception as e:
-        logger.error(f"Error processing message: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/stream")
-async def stream(request: StreamRequest):
-    """Send a message to the LLM and get a streaming response"""
-    if not model_router or not context_manager:
-        raise HTTPException(status_code=503, detail="Rhetor components not initialized")
-    
-    try:
-        # Get or create system prompt
-        system_prompt = prompt_engine.get_system_prompt(
-            component=request.component or request.context_id.split(":")[0] if ":" in request.context_id else None
-        )
-        
-        # Add user message to context
-        await context_manager.add_to_context(
-            context_id=request.context_id,
-            role="user",
-            content=request.message,
-            metadata={"task_type": request.task_type}
-        )
-        
-        # Use server-sent events for streaming
-        async def event_generator():
-            full_response = ""
-            
-            async for chunk in model_router.route_request(
-                message=request.message,
-                context_id=request.context_id,
-                task_type=request.task_type,
-                component=request.component,
-                system_prompt=system_prompt,
-                streaming=True,
-                override_config=request.options
-            ):
-                # Accumulate the full response
-                if "chunk" in chunk and chunk["chunk"]:
-                    full_response += chunk["chunk"]
-                
-                # Yield the chunk as an SSE event
-                yield {
-                    "event": "message",
-                    "data": json.dumps(chunk)
-                }
-                
-                # If this is the final chunk, save the full response to context
-                if chunk.get("done") and not chunk.get("error"):
-                    # Record in budget manager for streaming responses
-                    if budget_manager and "model" in chunk and "provider" in chunk:
-                        component_id = request.component or request.context_id.split(":")[0] if ":" in request.context_id else "unknown"
-                        input_text = request.message
-                        if system_prompt:
-                            input_text = system_prompt + "\n\n" + input_text
-                            
-                        budget_manager.record_completion(
-                            provider=chunk["provider"],
-                            model=chunk["model"],
-                            input_text=input_text,
-                            output_text=full_response,
-                            component=component_id,
-                            task_type=request.task_type,
-                            metadata={
-                                "context_id": request.context_id,
-                                "streaming": True,
-                                "system_prompt_length": len(system_prompt) if system_prompt else 0,
-                            }
-                        )
-                        
-                    await context_manager.add_to_context(
-                        context_id=request.context_id,
-                        role="assistant",
-                        content=full_response,
-                        metadata={
-                            "model": chunk.get("model"),
-                            "provider": chunk.get("provider"),
-                            "task_type": request.task_type
-                        }
-                    )
-        
-        return EventSourceResponse(event_generator())
-    except Exception as e:
-        logger.error(f"Error processing streaming request: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/chat")
-async def chat(request: ChatRequest):
-    """Send a chat conversation to the LLM and get a response"""
-    if not model_router or not context_manager:
-        raise HTTPException(status_code=503, detail="Rhetor components not initialized")
-    
-    try:
-        # Get or create system prompt
-        system_prompt = prompt_engine.get_system_prompt(
-            component=request.component or request.context_id.split(":")[0] if ":" in request.context_id else None
-        )
-        
-        # Add messages to context
-        for message in request.messages:
-            # Only add messages we haven't seen before
-            existing_messages = await context_manager.get_context_history(request.context_id)
-            existing_content = [msg["content"] for msg in existing_messages]
-            
-            if message["content"] not in existing_content:
-                await context_manager.add_to_context(
-                    context_id=request.context_id,
-                    role=message["role"],
-                    content=message["content"],
-                    metadata={"task_type": request.task_type}
-                )
-        
-        # Route to appropriate model
-        if request.streaming:
-            # For streaming, use SSE
-            async def event_generator():
-                full_response = ""
-                
-                async for chunk in model_router.route_chat_request(
-                    messages=request.messages,
-                    context_id=request.context_id,
-                    task_type=request.task_type,
-                    component=request.component,
-                    system_prompt=system_prompt,
-                    streaming=True,
-                    override_config=request.options
-                ):
-                    # Accumulate the full response
-                    if "chunk" in chunk and chunk["chunk"]:
-                        full_response += chunk["chunk"]
-                    
-                    # Yield the chunk as an SSE event
-                    yield {
-                        "event": "message",
-                        "data": json.dumps(chunk)
-                    }
-                    
-                    # If this is the final chunk, save the full response to context
-                    if chunk.get("done") and not chunk.get("error"):
-                        # Record in budget manager for streaming responses
-                        if budget_manager and "model" in chunk and "provider" in chunk:
-                            component_id = request.component or request.context_id.split(":")[0] if ":" in request.context_id else "unknown"
-                            
-                            # Convert messages to a single string for budget tracking
-                            combined_input = ""
-                            if system_prompt:
-                                combined_input += system_prompt + "\n\n"
-                                
-                            for message in request.messages:
-                                role = message.get("role", "user")
-                                content = message.get("content", "")
-                                combined_input += f"{role}: {content}\n"
-                                
-                            budget_manager.record_completion(
-                                provider=chunk["provider"],
-                                model=chunk["model"],
-                                input_text=combined_input,
-                                output_text=full_response,
-                                component=component_id,
-                                task_type=request.task_type,
-                                metadata={
-                                    "context_id": request.context_id,
-                                    "streaming": True,
-                                    "message_count": len(request.messages),
-                                    "system_prompt_length": len(system_prompt) if system_prompt else 0,
-                                }
-                            )
-                        
-                        await context_manager.add_to_context(
-                            context_id=request.context_id,
-                            role="assistant",
-                            content=full_response,
-                            metadata={
-                                "model": chunk.get("model"),
-                                "provider": chunk.get("provider"),
-                                "task_type": request.task_type
-                            }
-                        )
-            
-            return EventSourceResponse(event_generator())
-        else:
-            # Non-streaming response
-            response = await model_router.route_chat_request(
-                messages=request.messages,
-                context_id=request.context_id,
-                task_type=request.task_type,
-                component=request.component,
-                system_prompt=system_prompt,
-                streaming=False,
-                override_config=request.options
-            )
-            
-            # Add response to context
-            if "message" in response and not response.get("error"):
-                await context_manager.add_to_context(
-                    context_id=request.context_id,
-                    role="assistant",
-                    content=response["message"],
-                    metadata={
-                        "model": response.get("model"),
-                        "provider": response.get("provider"),
-                        "task_type": request.task_type
-                    }
-                )
-            
-            return response
-    except Exception as e:
-        logger.error(f"Error processing chat request: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# WebSocket support
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for real-time communication"""
-    await websocket.accept()
-    
-    if not model_router or not context_manager:
-        await websocket.send_json({
-            "type": "ERROR",
-            "payload": {"error": "Rhetor components not initialized"}
-        })
-        await websocket.close()
-        return
-    
-    try:
-        while True:
-            # Receive message
-            data = await websocket.receive_text()
-            request = json.loads(data)
-            
-            # Process based on message type
-            if request.get("type") == "LLM_REQUEST":
-                payload = request.get("payload", {})
-                
-                # Extract parameters
-                message = payload.get("message", "")
-                context_id = payload.get("context", "default")
-                task_type = payload.get("task_type", "default")
-                component = payload.get("component")
-                streaming = payload.get("streaming", True)
-                options = payload.get("options", {})
-                
-                # Get or create system prompt
-                system_prompt = prompt_engine.get_system_prompt(
-                    component=component or context_id.split(":")[0] if ":" in context_id else None
-                )
-                
-                # Add user message to context
-                await context_manager.add_to_context(
-                    context_id=context_id,
-                    role="user",
-                    content=message,
-                    metadata={"task_type": task_type}
-                )
-                
-                # Send typing indicator
-                await websocket.send_json({
-                    "type": "UPDATE",
-                    "source": "LLM",
-                    "target": request.get("source", "UI"),
-                    "timestamp": datetime.now().isoformat(),
-                    "payload": {
-                        "status": "typing",
-                        "isTyping": True,
-                        "context": context_id
-                    }
-                })
-                
-                if streaming:
-                    # Stream response
-                    full_response = ""
-                    async for chunk in model_router.route_request(
-                        message=message,
-                        context_id=context_id,
-                        task_type=task_type,
-                        component=component,
-                        system_prompt=system_prompt,
-                        streaming=True,
-                        override_config=options
-                    ):
-                        # Accumulate the full response
-                        if "chunk" in chunk and chunk["chunk"]:
-                            full_response += chunk["chunk"]
-                        
-                        # Send the chunk
-                        await websocket.send_json({
-                            "type": "UPDATE",
-                            "source": "LLM",
-                            "target": request.get("source", "UI"),
-                            "timestamp": datetime.now().isoformat(),
-                            "payload": chunk
-                        })
-                        
-                        # If this is the final chunk, save the full response to context
-                        if chunk.get("done") and not chunk.get("error"):
-                            # Record in budget manager for websocket streaming
-                            if budget_manager and "model" in chunk and "provider" in chunk:
-                                component_id = component or context_id.split(":")[0] if ":" in context_id else "unknown"
-                                input_text = message
-                                if system_prompt:
-                                    input_text = system_prompt + "\n\n" + input_text
-                                    
-                                budget_manager.record_completion(
-                                    provider=chunk["provider"],
-                                    model=chunk["model"],
-                                    input_text=input_text,
-                                    output_text=full_response,
-                                    component=component_id,
-                                    task_type=task_type,
-                                    metadata={
-                                        "context_id": context_id,
-                                        "streaming": True,
-                                        "system_prompt_length": len(system_prompt) if system_prompt else 0,
-                                        "interface": "websocket"
-                                    }
-                                )
-                            
-                            await context_manager.add_to_context(
-                                context_id=context_id,
-                                role="assistant",
-                                content=full_response,
-                                metadata={
-                                    "model": chunk.get("model"),
-                                    "provider": chunk.get("provider"),
-                                    "task_type": task_type
-                                }
-                            )
-                    
-                    # End typing indicator
-                    await websocket.send_json({
-                        "type": "UPDATE",
-                        "source": "LLM",
-                        "target": request.get("source", "UI"),
-                        "timestamp": datetime.now().isoformat(),
-                        "payload": {
-                            "status": "typing",
-                            "isTyping": False,
-                            "context": context_id
-                        }
-                    })
-                else:
-                    # Get complete response
-                    response = await model_router.route_request(
-                        message=message,
-                        context_id=context_id,
-                        task_type=task_type,
-                        component=component,
-                        system_prompt=system_prompt,
-                        streaming=False,
-                        override_config=options
-                    )
-                    
-                    # Add response to context if not an error
-                    if "message" in response and not response.get("error"):
-                        await context_manager.add_to_context(
-                            context_id=context_id,
-                            role="assistant",
-                            content=response["message"],
-                            metadata={
-                                "model": response.get("model"), 
-                                "provider": response.get("provider"),
-                                "task_type": task_type
-                            }
-                        )
-                    
-                    # Send the response
-                    await websocket.send_json({
-                        "type": "RESPONSE",
-                        "source": "LLM",
-                        "target": request.get("source", "UI"),
-                        "timestamp": datetime.now().isoformat(),
-                        "payload": response
-                    })
-                    
-                    # End typing indicator
-                    await websocket.send_json({
-                        "type": "UPDATE",
-                        "source": "LLM",
-                        "target": request.get("source", "UI"),
-                        "timestamp": datetime.now().isoformat(),
-                        "payload": {
-                            "status": "typing",
-                            "isTyping": False,
-                            "context": context_id
-                        }
-                    })
-            
-            elif request.get("type") == "CHAT_REQUEST":
-                payload = request.get("payload", {})
-                
-                # Extract parameters
-                messages = payload.get("messages", [])
-                context_id = payload.get("context", "default")
-                task_type = payload.get("task_type", "default")
-                component = payload.get("component")
-                streaming = payload.get("streaming", True)
-                options = payload.get("options", {})
-                
-                # Get or create system prompt
-                system_prompt = prompt_engine.get_system_prompt(
-                    component=component or context_id.split(":")[0] if ":" in context_id else None
-                )
-                
-                # Add messages to context
-                for message in messages:
-                    # Only add messages we haven't seen before
-                    existing_messages = await context_manager.get_context_history(context_id)
-                    existing_content = [msg["content"] for msg in existing_messages]
-                    
-                    if message["content"] not in existing_content:
-                        await context_manager.add_to_context(
-                            context_id=context_id,
-                            role=message["role"],
-                            content=message["content"],
-                            metadata={"task_type": task_type}
-                        )
-                
-                # Send typing indicator
-                await websocket.send_json({
-                    "type": "UPDATE",
-                    "source": "LLM",
-                    "target": request.get("source", "UI"),
-                    "timestamp": datetime.now().isoformat(),
-                    "payload": {
-                        "status": "typing",
-                        "isTyping": True,
-                        "context": context_id
-                    }
-                })
-                
-                if streaming:
-                    # Stream response
-                    full_response = ""
-                    async for chunk in model_router.route_chat_request(
-                        messages=messages,
-                        context_id=context_id,
-                        task_type=task_type,
-                        component=component,
-                        system_prompt=system_prompt,
-                        streaming=True,
-                        override_config=options
-                    ):
-                        # Accumulate the full response
-                        if "chunk" in chunk and chunk["chunk"]:
-                            full_response += chunk["chunk"]
-                        
-                        # Send the chunk
-                        await websocket.send_json({
-                            "type": "UPDATE",
-                            "source": "LLM",
-                            "target": request.get("source", "UI"),
-                            "timestamp": datetime.now().isoformat(),
-                            "payload": chunk
-                        })
-                        
-                        # If this is the final chunk, save the full response to context
-                        if chunk.get("done") and not chunk.get("error"):
-                            # Record in budget manager for websocket streaming
-                            if budget_manager and "model" in chunk and "provider" in chunk:
-                                component_id = component or context_id.split(":")[0] if ":" in context_id else "unknown"
-                                
-                                # Convert messages to string for budget tracking
-                                combined_input = ""
-                                if system_prompt:
-                                    combined_input += system_prompt + "\n\n"
-                                
-                                for message in messages:
-                                    role = message.get("role", "user")
-                                    content = message.get("content", "")
-                                    combined_input += f"{role}: {content}\n"
-                                
-                                budget_manager.record_completion(
-                                    provider=chunk["provider"],
-                                    model=chunk["model"],
-                                    input_text=combined_input,
-                                    output_text=full_response,
-                                    component=component_id,
-                                    task_type=task_type,
-                                    metadata={
-                                        "context_id": context_id,
-                                        "streaming": True,
-                                        "message_count": len(messages),
-                                        "system_prompt_length": len(system_prompt) if system_prompt else 0,
-                                        "interface": "websocket"
-                                    }
-                                )
-                            
-                            await context_manager.add_to_context(
-                                context_id=context_id,
-                                role="assistant",
-                                content=full_response,
-                                metadata={
-                                    "model": chunk.get("model"),
-                                    "provider": chunk.get("provider"),
-                                    "task_type": task_type
-                                }
-                            )
-                    
-                    # End typing indicator
-                    await websocket.send_json({
-                        "type": "UPDATE",
-                        "source": "LLM",
-                        "target": request.get("source", "UI"),
-                        "timestamp": datetime.now().isoformat(),
-                        "payload": {
-                            "status": "typing",
-                            "isTyping": False,
-                            "context": context_id
-                        }
-                    })
-                else:
-                    # Get complete response
-                    response = await model_router.route_chat_request(
-                        messages=messages,
-                        context_id=context_id,
-                        task_type=task_type,
-                        component=component,
-                        system_prompt=system_prompt,
-                        streaming=False,
-                        override_config=options
-                    )
-                    
-                    # Add response to context if not an error
-                    if "message" in response and not response.get("error"):
-                        await context_manager.add_to_context(
-                            context_id=context_id,
-                            role="assistant",
-                            content=response["message"],
-                            metadata={
-                                "model": response.get("model"), 
-                                "provider": response.get("provider"),
-                                "task_type": task_type
-                            }
-                        )
-                    
-                    # Send the response
-                    await websocket.send_json({
-                        "type": "RESPONSE",
-                        "source": "LLM",
-                        "target": request.get("source", "UI"),
-                        "timestamp": datetime.now().isoformat(),
-                        "payload": response
-                    })
-                    
-                    # End typing indicator
-                    await websocket.send_json({
-                        "type": "UPDATE",
-                        "source": "LLM",
-                        "target": request.get("source", "UI"),
-                        "timestamp": datetime.now().isoformat(),
-                        "payload": {
-                            "status": "typing",
-                            "isTyping": False,
-                            "context": context_id
-                        }
-                    })
-            
-            elif request.get("type") == "REGISTER":
-                # Handle client registration
-                await websocket.send_json({
-                    "type": "RESPONSE",
-                    "source": "SYSTEM",
-                    "target": request.get("source", "UNKNOWN"),
-                    "timestamp": datetime.now().isoformat(),
-                    "payload": {
-                        "status": "registered",
-                        "message": "Client registered successfully with Rhetor LLM Manager"
-                    }
-                })
-            
-            elif request.get("type") == "AI_SPECIALIST_REQUEST":
-                # AI Specialist request
-                payload = request.get("payload", {})
-                specialist_id = payload.get("specialist_id")
-                message = payload.get("message", "")
-                context_id = payload.get("context", "default")
-                
-                if not specialist_router or not specialist_id:
-                    await websocket.send_json({
-                        "type": "ERROR",
-                        "payload": {"error": "Invalid AI specialist request"}
-                    })
-                    continue
-                
-                # Route to specialist
-                response = await specialist_router.route_to_specialist(
-                    specialist_id=specialist_id,
-                    message=message,
-                    context_id=context_id,
-                    streaming=payload.get("streaming", True)
-                )
-                
-                if payload.get("streaming", True):
-                    async for chunk in response:
-                        await websocket.send_json({
-                            "type": "AI_SPECIALIST_UPDATE",
-                            "source": specialist_id,
-                            "target": request.get("source", "UI"),
-                            "timestamp": datetime.now().isoformat(),
-                            "payload": chunk
-                        })
-                else:
-                    await websocket.send_json({
-                        "type": "AI_SPECIALIST_RESPONSE",
-                        "source": specialist_id,
-                        "target": request.get("source", "UI"),
-                        "timestamp": datetime.now().isoformat(),
-                        "payload": response
-                    })
-                    
-            elif request.get("type") == "AI_TEAM_CHAT":
-                # AI Team Chat request
-                payload = request.get("payload", {})
-                
-                if not ai_messaging_integration:
-                    await websocket.send_json({
-                        "type": "ERROR",
-                        "payload": {"error": "AI messaging integration not available"}
-                    })
-                    continue
-                
-                # Orchestrate team chat
-                messages = await ai_messaging_integration.orchestrate_team_chat(
-                    topic=payload.get("topic", ""),
-                    specialists=payload.get("specialists", []),
-                    initial_prompt=payload.get("prompt", "")
-                )
-                
-                # Send each message as it's generated
-                for msg in messages:
-                    await websocket.send_json({
-                        "type": "TEAM_CHAT_MESSAGE",
-                        "source": msg.get("sender"),
-                        "timestamp": msg.get("timestamp"),
-                        "payload": msg
-                    })
-            
-            elif request.get("type") == "STATUS":
-                # Handle status request
-                providers = llm_client.get_all_providers()
-                available_providers = {
-                    provider_id: info["available"] 
-                    for provider_id, info in providers.items()
-                }
-                
-                # Get budget status
-                budget_status = {}
-                if budget_manager:
-                    daily_usage = budget_manager.get_current_usage_total(BudgetPeriod.DAILY)
-                    weekly_usage = budget_manager.get_current_usage_total(BudgetPeriod.WEEKLY)
-                    monthly_usage = budget_manager.get_current_usage_total(BudgetPeriod.MONTHLY)
-                    
-                    daily_limit = budget_manager.get_budget_limit(BudgetPeriod.DAILY)
-                    weekly_limit = budget_manager.get_budget_limit(BudgetPeriod.WEEKLY)
-                    monthly_limit = budget_manager.get_budget_limit(BudgetPeriod.MONTHLY)
-                    
-                    budget_status = {
-                        "daily_usage": daily_usage,
-                        "weekly_usage": weekly_usage,
-                        "monthly_usage": monthly_usage,
-                        "daily_limit": daily_limit,
-                        "weekly_limit": weekly_limit,
-                        "monthly_limit": monthly_limit,
-                        "budget_enabled": True
-                    }
-                
-                # Get AI specialist status
-                ai_specialist_status = {}
-                if ai_specialist_manager:
-                    active_specialists = await ai_specialist_manager.list_active_specialists()
-                    ai_specialist_status = {
-                        "active_count": len(active_specialists),
-                        "specialists": active_specialists
-                    }
-                
-                await websocket.send_json({
-                    "type": "RESPONSE",
-                    "source": "SYSTEM",
-                    "target": request.get("source", "UI"),
-                    "timestamp": datetime.now().isoformat(),
-                    "payload": {
-                        "status": "ok",
-                        "service": "rhetor",
-                        "version": "0.1.0",
-                        "providers": available_providers,
-                        "default_provider": llm_client.default_provider_id,
-                        "default_model": llm_client.default_model,
-                        "budget": budget_status,
-                        "ai_specialists": ai_specialist_status,
-                        "message": "Rhetor LLM Manager is running"
-                    }
-                })
-            
-            else:
-                # Unsupported request type
-                await websocket.send_json({
-                    "type": "ERROR",
-                    "payload": {"error": f"Unsupported request type: {request.get('type')}"}
-                })
-    except WebSocketDisconnect:
-        logger.info("WebSocket client disconnected")
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
-        try:
-            await websocket.send_json({
-                "type": "ERROR",
-                "payload": {"error": str(e)}
-            })
-        except:
-            pass
-
-
-# Template management endpoints
-@app.get("/templates")
-async def list_templates(
-    category: Optional[str] = Query(None, description="Filter templates by category"),
-    tag: Optional[str] = Query(None, description="Filter templates by tag")
-):
-    """List all templates with optional filtering by category or tag"""
-    if not template_manager:
-        raise HTTPException(status_code=503, detail="Template manager not initialized")
-    
-    try:
-        templates = template_manager.list_templates(category=category, tag=tag)
-        return {
-            "count": len(templates),
-            "templates": templates
-        }
-    except Exception as e:
-        logger.error(f"Error listing templates: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/templates", status_code=201)
-async def create_template(request: TemplateCreateRequest):
-    """Create a new template"""
-    if not template_manager:
-        raise HTTPException(status_code=503, detail="Template manager not initialized")
-    
-    try:
-        template = template_manager.create_template(
-            name=request.name,
-            content=request.content,
-            category=request.category,
-            description=request.description,
-            tags=request.tags,
-            metadata=request.metadata
-        )
-        return template
-    except Exception as e:
-        logger.error(f"Error creating template: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/templates/{template_id}")
-async def get_template(
-    template_id: str = Path(..., description="Template ID"),
-    version_id: Optional[str] = Query(None, description="Version ID (defaults to latest)")
-):
-    """Get a template by ID with optional version"""
-    if not template_manager:
-        raise HTTPException(status_code=503, detail="Template manager not initialized")
-    
-    try:
-        template = template_manager.get_template(template_id, version_id=version_id)
-        if not template:
-            raise HTTPException(status_code=404, detail=f"Template {template_id} not found")
-        return template
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting template: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.put("/templates/{template_id}")
-async def update_template(
-    template_id: str = Path(..., description="Template ID"),
-    request: TemplateUpdateRequest = None
-):
-    """Update a template by ID"""
-    if not template_manager:
-        raise HTTPException(status_code=503, detail="Template manager not initialized")
-    
-    try:
-        template = template_manager.update_template(
-            template_id=template_id,
-            content=request.content,
-            metadata=request.metadata
-        )
-        return template
-    except Exception as e:
-        logger.error(f"Error updating template: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/templates/{template_id}")
-async def delete_template(template_id: str = Path(..., description="Template ID")):
-    """Delete a template by ID"""
-    if not template_manager:
-        raise HTTPException(status_code=503, detail="Template manager not initialized")
-    
-    try:
-        success = template_manager.delete_template(template_id)
-        if not success:
-            raise HTTPException(status_code=404, detail=f"Template {template_id} not found")
-        return {"success": True, "template_id": template_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting template: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/templates/{template_id}/versions")
-async def list_template_versions(template_id: str = Path(..., description="Template ID")):
-    """List all versions of a template"""
-    if not template_manager:
-        raise HTTPException(status_code=503, detail="Template manager not initialized")
-    
-    try:
-        versions = template_manager.get_template_versions(template_id)
-        if not versions:
-            raise HTTPException(status_code=404, detail=f"Template {template_id} not found")
-        return {
-            "template_id": template_id,
-            "count": len(versions),
-            "versions": versions
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error listing template versions: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/templates/render")
-async def render_template(request: TemplateRenderRequest):
-    """Render a template with variables"""
-    if not template_manager:
-        raise HTTPException(status_code=503, detail="Template manager not initialized")
-    
-    try:
-        rendered = template_manager.render_template(
-            template_id=request.template_id,
-            variables=request.variables,
-            version_id=request.version_id
-        )
-        return {
-            "template_id": request.template_id,
-            "version_id": request.version_id or "latest",
-            "rendered_content": rendered
-        }
-    except Exception as e:
-        logger.error(f"Error rendering template: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Prompt management endpoints
-@app.get("/prompts")
-async def list_prompts(
-    component: Optional[str] = Query(None, description="Filter prompts by component"),
-    tag: Optional[str] = Query(None, description="Filter prompts by tag")
-):
-    """List all prompts with optional filtering by component or tag"""
-    if not prompt_registry:
-        raise HTTPException(status_code=503, detail="Prompt registry not initialized")
-    
-    try:
-        prompts = prompt_registry.list_prompts(component=component, tag=tag)
-        return {
-            "count": len(prompts),
-            "prompts": prompts
-        }
-    except Exception as e:
-        logger.error(f"Error listing prompts: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/prompts", status_code=201)
-async def create_prompt(request: PromptCreateRequest):
-    """Create a new prompt"""
-    if not prompt_registry:
-        raise HTTPException(status_code=503, detail="Prompt registry not initialized")
-    
-    try:
-        prompt = prompt_registry.create_prompt(
-            name=request.name,
-            component=request.component,
-            content=request.content,
-            description=request.description,
-            tags=request.tags,
-            is_default=request.is_default,
-            parent_id=request.parent_id,
-            metadata=request.metadata
-        )
-        return prompt
-    except Exception as e:
-        logger.error(f"Error creating prompt: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/prompts/{prompt_id}")
-async def get_prompt(prompt_id: str = Path(..., description="Prompt ID")):
-    """Get a prompt by ID"""
-    if not prompt_registry:
-        raise HTTPException(status_code=503, detail="Prompt registry not initialized")
-    
-    try:
-        prompt = prompt_registry.get_prompt(prompt_id)
-        if not prompt:
-            raise HTTPException(status_code=404, detail=f"Prompt {prompt_id} not found")
-        return prompt
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting prompt: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.put("/prompts/{prompt_id}")
-async def update_prompt(
-    prompt_id: str = Path(..., description="Prompt ID"),
-    request: PromptUpdateRequest = None
-):
-    """Update a prompt by ID"""
-    if not prompt_registry:
-        raise HTTPException(status_code=503, detail="Prompt registry not initialized")
-    
-    try:
-        prompt = prompt_registry.update_prompt(
-            prompt_id=prompt_id,
-            content=request.content,
-            metadata=request.metadata
-        )
-        return prompt
-    except Exception as e:
-        logger.error(f"Error updating prompt: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/prompts/{prompt_id}")
-async def delete_prompt(prompt_id: str = Path(..., description="Prompt ID")):
-    """Delete a prompt by ID"""
-    if not prompt_registry:
-        raise HTTPException(status_code=503, detail="Prompt registry not initialized")
-    
-    try:
-        success = prompt_registry.delete_prompt(prompt_id)
-        if not success:
-            raise HTTPException(status_code=404, detail=f"Prompt {prompt_id} not found")
-        return {"success": True, "prompt_id": prompt_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting prompt: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/prompts/compare")
-async def compare_prompts(request: PromptCompareRequest):
-    """Compare two prompts"""
-    if not prompt_registry:
-        raise HTTPException(status_code=503, detail="Prompt registry not initialized")
-    
-    try:
-        comparison = prompt_registry.compare_prompts(
-            prompt_id1=request.prompt_id1,
-            prompt_id2=request.prompt_id2
-        )
-        return comparison
-    except Exception as e:
-        logger.error(f"Error comparing prompts: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Context management endpoints
-@app.get("/contexts")
-async def list_contexts():
-    """List all available contexts"""
-    if not context_manager:
-        raise HTTPException(status_code=503, detail="Context manager not initialized")
-    
-    try:
-        contexts = await context_manager.list_contexts()
-        return {
-            "count": len(contexts),
-            "contexts": contexts
-        }
-    except Exception as e:
-        logger.error(f"Error listing contexts: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/contexts/{context_id}")
-async def get_context(
-    context_id: str = Path(..., description="Context ID"),
-    limit: int = Query(20, description="Maximum number of messages to return"),
-    include_metadata: bool = Query(False, description="Include message metadata")
-):
-    """Get messages in a context"""
-    if not context_manager:
-        raise HTTPException(status_code=503, detail="Context manager not initialized")
-    
-    try:
-        messages = await context_manager.get_context_history(
-            context_id=context_id,
-            limit=limit
-        )
-        
-        # Remove metadata if not requested
-        if not include_metadata:
-            for message in messages:
-                if "metadata" in message:
-                    del message["metadata"]
-        
-        return {
-            "context_id": context_id,
-            "count": len(messages),
-            "messages": messages
-        }
-    except Exception as e:
-        logger.error(f"Error getting context: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/contexts/{context_id}")
-async def delete_context(context_id: str = Path(..., description="Context ID")):
-    """Delete a context and all its messages"""
-    if not context_manager:
-        raise HTTPException(status_code=503, detail="Context manager not initialized")
-    
-    try:
-        success = await context_manager.delete_context(context_id)
-        return {"success": success, "context_id": context_id}
-    except Exception as e:
-        logger.error(f"Error deleting context: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/contexts/{context_id}/search")
-async def search_context(
-    context_id: str = Path(..., description="Context ID"),
-    query: str = Query(..., description="Search query"),
-    limit: int = Query(5, description="Maximum number of results")
-):
-    """Search for messages in a context"""
-    if not context_manager:
-        raise HTTPException(status_code=503, detail="Context manager not initialized")
-    
-    try:
-        results = await context_manager.search_context(
-            context_id=context_id,
-            query=query,
-            limit=limit
-        )
-        return {
-            "context_id": context_id,
-            "query": query,
-            "count": len(results),
-            "results": results
-        }
-    except Exception as e:
-        logger.error(f"Error searching context: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/contexts/{context_id}/summarize")
-async def summarize_context(
-    context_id: str = Path(..., description="Context ID"),
-    max_tokens: int = Query(150, description="Maximum tokens for summary")
-):
-    """Generate a summary of a context"""
-    if not context_manager:
-        raise HTTPException(status_code=503, detail="Context manager not initialized")
-    
-    try:
-        summary = await context_manager.summarize_context(
-            context_id=context_id,
-            max_tokens=max_tokens
-        )
-        return {
-            "context_id": context_id,
-            "summary": summary
-        }
-    except Exception as e:
-        logger.error(f"Error summarizing context: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Budget management endpoints
-@app.get("/budget")
-async def get_budget_status():
-    """Get the current budget status"""
-    if not budget_manager:
-        raise HTTPException(status_code=503, detail="Budget manager not initialized")
-    
-    try:
-        # Get current usage
-        daily_usage = budget_manager.get_current_usage_total(BudgetPeriod.DAILY)
-        weekly_usage = budget_manager.get_current_usage_total(BudgetPeriod.WEEKLY)
-        monthly_usage = budget_manager.get_current_usage_total(BudgetPeriod.MONTHLY)
-        
-        # Get budget limits
-        daily_limit = budget_manager.get_budget_limit(BudgetPeriod.DAILY)
-        weekly_limit = budget_manager.get_budget_limit(BudgetPeriod.WEEKLY)
-        monthly_limit = budget_manager.get_budget_limit(BudgetPeriod.MONTHLY)
-        
-        # Get enforcement policies
-        daily_policy = budget_manager.get_enforcement_policy(BudgetPeriod.DAILY)
-        weekly_policy = budget_manager.get_enforcement_policy(BudgetPeriod.WEEKLY)
-        monthly_policy = budget_manager.get_enforcement_policy(BudgetPeriod.MONTHLY)
-        
-        return {
-            "daily": {
-                "usage": daily_usage,
-                "limit": daily_limit,
-                "remaining": max(0, daily_limit - daily_usage) if daily_limit > 0 else None,
-                "policy": daily_policy,
-                "percentage": (daily_usage / daily_limit) * 100 if daily_limit > 0 else None
-            },
-            "weekly": {
-                "usage": weekly_usage,
-                "limit": weekly_limit,
-                "remaining": max(0, weekly_limit - weekly_usage) if weekly_limit > 0 else None, 
-                "policy": weekly_policy,
-                "percentage": (weekly_usage / weekly_limit) * 100 if weekly_limit > 0 else None
-            },
-            "monthly": {
-                "usage": monthly_usage,
-                "limit": monthly_limit,
-                "remaining": max(0, monthly_limit - monthly_usage) if monthly_limit > 0 else None,
-                "policy": monthly_policy,
-                "percentage": (monthly_usage / monthly_limit) * 100 if monthly_limit > 0 else None
+        return create_health_response(
+            component_name=COMPONENT_NAME,
+            port=rhetor_port,
+            version=COMPONENT_VERSION,
+            status="healthy" if llm_client and llm_client.is_initialized else "unhealthy",
+            registered=is_registered_with_hermes,
+            details={
+                "llm_client": llm_client is not None and llm_client.is_initialized,
+                "context_manager": context_manager is not None,
+                "template_manager": template_manager is not None,
+                "budget_manager": budget_manager is not None,
+                "specialist_manager": ai_specialist_manager is not None,
+                "prompt_engine": prompt_engine is not None,
+                "uptime": time.time() - start_time if start_time else 0
             }
-        }
-    except Exception as e:
-        logger.error(f"Error getting budget status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/budget/settings")
-async def get_budget_settings():
-    """Get all budget settings"""
-    if not budget_manager:
-        raise HTTPException(status_code=503, detail="Budget manager not initialized")
-    
-    try:
-        settings = budget_manager.get_budget_settings()
-        return settings
-    except Exception as e:
-        logger.error(f"Error getting budget settings: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/budget/limit")
-async def set_budget_limit(request: BudgetLimitRequest):
-    """Set a budget limit for a period"""
-    if not budget_manager:
-        raise HTTPException(status_code=503, detail="Budget manager not initialized")
-    
-    try:
-        # Validate period
-        try:
-            period = BudgetPeriod(request.period)
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid period: {request.period}. Must be one of: daily, weekly, monthly")
-        
-        # Validate enforcement policy if provided
-        if request.enforcement:
-            try:
-                policy = BudgetPolicy(request.enforcement)
-            except ValueError:
-                raise HTTPException(status_code=400, detail=f"Invalid enforcement policy: {request.enforcement}. Must be one of: ignore, warn, enforce")
-        
-        # Set the budget limit
-        success = budget_manager.set_budget_limit(
-            period=period,
-            limit_amount=request.limit_amount,
-            provider=request.provider,
-            enforcement=request.enforcement
         )
-        
-        return {
-            "success": success,
-            "period": request.period,
-            "limit_amount": request.limit_amount,
-            "provider": request.provider,
-            "enforcement": request.enforcement
-        }
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error setting budget limit: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/budget/policy")
-async def set_budget_policy(request: BudgetPolicyRequest):
-    """Set a budget enforcement policy for a period"""
-    if not budget_manager:
-        raise HTTPException(status_code=503, detail="Budget manager not initialized")
-    
-    try:
-        # Validate period
-        try:
-            period = BudgetPeriod(request.period)
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid period: {request.period}. Must be one of: daily, weekly, monthly")
-        
-        # Validate policy
-        try:
-            policy = BudgetPolicy(request.policy)
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid policy: {request.policy}. Must be one of: ignore, warn, enforce")
-        
-        # Set the policy
-        success = budget_manager.set_enforcement_policy(
-            period=period,
-            policy=policy,
-            provider=request.provider
-        )
-        
-        return {
-            "success": success,
-            "period": request.period,
-            "policy": request.policy,
-            "provider": request.provider
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error setting budget policy: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/budget/usage")
-async def get_budget_usage(
-    period: str = Query("daily", description="Period (daily, weekly, monthly)"),
-    provider: Optional[str] = Query(None, description="Filter by provider")
-):
-    """Get detailed usage data for a period"""
-    if not budget_manager:
-        raise HTTPException(status_code=503, detail="Budget manager not initialized")
-    
-    try:
-        # Validate period
-        try:
-            period_enum = BudgetPeriod(period)
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid period: {period}. Must be one of: daily, weekly, monthly")
-        
-        # Get usage data
-        usage = budget_manager.get_usage(period=period_enum, provider=provider)
-        
-        return {
-            "period": period,
-            "provider": provider,
-            "count": len(usage),
-            "usage": usage
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting budget usage: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/budget/summary")
-async def get_budget_summary(
-    period: str = Query("daily", description="Period (daily, weekly, monthly)"),
-    group_by: str = Query("provider", description="Group by field (provider, model, component, task_type)")
-):
-    """Get a usage summary for a period, grouped by provider, model, or component"""
-    if not budget_manager:
-        raise HTTPException(status_code=503, detail="Budget manager not initialized")
-    
-    try:
-        # Validate period
-        try:
-            period_enum = BudgetPeriod(period)
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid period: {period}. Must be one of: daily, weekly, monthly")
-        
-        # Validate group_by
-        valid_fields = ["provider", "model", "component", "task_type"]
-        if group_by not in valid_fields:
-            raise HTTPException(status_code=400, detail=f"Invalid group_by: {group_by}. Must be one of: {', '.join(valid_fields)}")
-        
-        # Get the summary
-        summary = budget_manager.get_usage_summary(period=period_enum, group_by=group_by)
-        
-        return summary
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting budget summary: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/budget/model-tiers")
-async def get_model_tiers():
-    """Get models categorized by price tier"""
-    if not budget_manager:
-        raise HTTPException(status_code=503, detail="Budget manager not initialized")
-    
-    try:
-        tiers = budget_manager.get_model_tiers()
-        return tiers
-    except Exception as e:
-        logger.error(f"Error getting model tiers: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Health check failed: {e}")
+        raise HTTPException(status_code=503, detail="Service unhealthy")
 
 
-# Add ready endpoint
+# Ready endpoint
 routers.root.add_api_route(
     "/ready",
     create_ready_endpoint(
@@ -1859,107 +421,323 @@ routers.root.add_api_route(
     methods=["GET"]
 )
 
-# Add discovery endpoint to v1 router
-routers.v1.add_api_route(
-    "/discovery",
+# API discovery endpoint
+routers.root.add_api_route(
+    "/api",
     create_discovery_endpoint(
-        component_name=COMPONENT_NAME,
-        component_version=COMPONENT_VERSION,
-        component_description=COMPONENT_DESCRIPTION,
+        COMPONENT_NAME,
+        COMPONENT_VERSION,
+        COMPONENT_DESCRIPTION,
         endpoints=[
             EndpointInfo(
-                path="/api/v1/send",
+                path="/api/v1/llm",
                 method="POST",
-                description="Send message to LLM"
+                description="Generate LLM response"
             ),
             EndpointInfo(
-                path="/api/v1/chat",
-                method="POST",
-                description="Chat conversation with LLM"
-            ),
-            EndpointInfo(
-                path="/api/v1/stream",
-                method="POST",
-                description="Stream LLM response"
-            ),
-            EndpointInfo(
-                path="/api/v1/providers",
+                path="/api/v1/models",
                 method="GET",
-                description="List available LLM providers"
+                description="List available models"
+            ),
+            EndpointInfo(
+                path="/api/v1/models",
+                method="POST",
+                description="Configure model settings"
             ),
             EndpointInfo(
                 path="/api/v1/templates",
                 method="GET",
-                description="List prompt templates"
+                description="List templates"
             ),
             EndpointInfo(
-                path="/api/v1/contexts",
-                method="GET",
-                description="List active contexts"
+                path="/api/v1/templates",
+                method="POST",
+                description="Create template"
             ),
             EndpointInfo(
-                path="/api/v1/budget/usage",
+                path="/api/v1/templates",
+                method="PUT",
+                description="Update template"
+            ),
+            EndpointInfo(
+                path="/api/v1/templates",
+                method="DELETE",
+                description="Delete template"
+            ),
+            EndpointInfo(
+                path="/api/v1/prompts",
                 method="GET",
-                description="Get budget usage statistics"
+                description="List prompts"
+            ),
+            EndpointInfo(
+                path="/api/v1/prompts",
+                method="POST",
+                description="Create prompt"
+            ),
+            EndpointInfo(
+                path="/api/v1/context",
+                method="GET",
+                description="Get context"
+            ),
+            EndpointInfo(
+                path="/api/v1/context",
+                method="POST",
+                description="Create context"
+            ),
+            EndpointInfo(
+                path="/api/v1/context",
+                method="PUT",
+                description="Update context"
+            ),
+            EndpointInfo(
+                path="/api/v1/context",
+                method="DELETE",
+                description="Delete context"
+            ),
+            EndpointInfo(
+                path="/ws",
+                method="GET",
+                description="WebSocket for streaming"
             )
         ],
         capabilities=[
-            "llm_routing",
-            "prompt_management", 
+            "llm_orchestration",
+            "multi_provider_support",
+            "intelligent_routing",
             "context_management",
-            "budget_tracking",
-            "streaming_responses",
-            "template_rendering"
-        ],
-        dependencies={
-            "hermes": "http://localhost:8001"
-        },
-        metadata={
-            "websocket_endpoint": "/ws",
-            "documentation": "/api/v1/docs"
-        }
+            "prompt_templates",
+            "streaming",
+            "model_management"
+        ]
     ),
     methods=["GET"]
 )
 
+
+# Model for LLM generation requests
+class LLMRequest(TektonBaseModel):
+    """Request model for LLM generation."""
+    prompt: str = Field(..., description="The prompt to send to the LLM")
+    model: Optional[str] = Field(None, description="Specific model to use")
+    temperature: Optional[float] = Field(0.7, ge=0.0, le=2.0, description="Temperature for response generation")
+    max_tokens: Optional[int] = Field(None, ge=1, description="Maximum tokens to generate")
+    stream: Optional[bool] = Field(False, description="Whether to stream the response")
+    context: Optional[Dict[str, Any]] = Field(None, description="Additional context for the request")
+    specialist: Optional[str] = Field(None, description="AI specialist to route the request to")
+
+
+class LLMResponse(TektonBaseModel):
+    """Response model for LLM generation."""
+    content: str = Field(..., description="Generated content")
+    model: str = Field(..., description="Model used for generation")
+    usage: Dict[str, int] = Field(..., description="Token usage statistics")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional response metadata")
+
+
+# LLM generation endpoint
+@routers.v1.post("/llm", response_model=LLMResponse)
+async def generate_llm_response(request: LLMRequest) -> LLMResponse:
+    """Generate a response from the LLM."""
+    try:
+        # Route through AI specialist if specified
+        if request.specialist and ai_specialist_manager:
+            specialist = ai_specialist_manager.get_specialist(request.specialist)
+            if not specialist:
+                raise HTTPException(status_code=404, detail=f"Specialist '{request.specialist}' not found")
+            
+            # Send message to specialist
+            response = await ai_specialist_manager.send_message_to_specialist(
+                specialist_id=request.specialist,
+                message=request.prompt,
+                context=request.context
+            )
+            
+            return LLMResponse(
+                content=response["response"],
+                model=response.get("model", "unknown"),
+                usage=response.get("usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}),
+                metadata={
+                    "specialist": request.specialist,
+                    "conversation_id": response.get("conversation_id")
+                }
+            )
+        
+        # Regular LLM routing
+        if request.model:
+            # Use specific model
+            response = await llm_client.generate(
+                prompt=request.prompt,
+                model=request.model,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens
+            )
+        else:
+            # Use model router for intelligent routing
+            response = await model_router.route_request(
+                prompt=request.prompt,
+                context=request.context,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens
+            )
+        
+        # Track budget usage
+        if budget_manager:
+            await budget_manager.track_usage(
+                model=response["model"],
+                prompt_tokens=response["usage"]["prompt_tokens"],
+                completion_tokens=response["usage"]["completion_tokens"],
+                cost=response.get("cost", 0.0)
+            )
+        
+        return LLMResponse(
+            content=response["content"],
+            model=response["model"],
+            usage=response["usage"],
+            metadata=response.get("metadata")
+        )
+        
+    except Exception as e:
+        logger.error(f"Error generating LLM response: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Mount standard routers
 mount_standard_routers(app, routers)
 
-# Include AI specialist endpoints
-from .ai_specialist_endpoints import router as ai_router
-app.include_router(ai_router)
 
-# Add shutdown endpoint using shared utility
-
-
-
-
-def run_server(host="0.0.0.0", port=None, log_level="info"):
-    """
-    Run the Rhetor API server.
+# WebSocket endpoint for streaming
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for streaming LLM responses."""
+    await websocket.accept()
     
-    Args:
-        host: Host to bind to
-        port: Port to bind to
-        log_level: Logging level
-    """
-    # Get port configuration
-    if port is None:
-        config = get_component_config()
-        port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT"))
+    try:
+        while True:
+            # Receive message
+            data = await websocket.receive_json()
+            
+            # Validate request
+            if "prompt" not in data:
+                await websocket.send_json({
+                    "error": "Missing required field: prompt"
+                })
+                continue
+            
+            # Generate streaming response
+            try:
+                model = data.get("model")
+                specialist = data.get("specialist")
+                
+                # Route through specialist if specified
+                if specialist and ai_specialist_manager:
+                    # Stream from specialist
+                    async for chunk in ai_specialist_manager.stream_to_specialist(
+                        specialist_id=specialist,
+                        message=data["prompt"],
+                        context=data.get("context")
+                    ):
+                        await websocket.send_json({
+                            "type": "chunk",
+                            "content": chunk.get("content", ""),
+                            "metadata": chunk.get("metadata")
+                        })
+                    
+                    await websocket.send_json({"type": "complete"})
+                else:
+                    # Regular streaming
+                    async for chunk in llm_client.stream(
+                        prompt=data["prompt"],
+                        model=model,
+                        temperature=data.get("temperature", 0.7),
+                        max_tokens=data.get("max_tokens")
+                    ):
+                        await websocket.send_json({
+                            "type": "chunk",
+                            "content": chunk["content"]
+                        })
+                    
+                    await websocket.send_json({"type": "complete"})
+                    
+            except Exception as e:
+                logger.error(f"Error in streaming: {e}")
+                await websocket.send_json({
+                    "type": "error",
+                    "error": str(e)
+                })
+                
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        await websocket.close()
+
+
+# Template management endpoints
+@routers.v1.get("/templates")
+async def list_templates():
+    """List all available templates."""
+    try:
+        templates = template_manager.list_templates()
+        return {"templates": templates}
+    except Exception as e:
+        logger.error(f"Error listing templates: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@routers.v1.get("/templates/{template_id}")
+async def get_template(template_id: str = Path(..., description="Template ID")):
+    """Get a specific template by ID."""
+    try:
+        template = template_manager.get_template(template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+        return template
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting template: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Model management endpoints
+@routers.v1.get("/models")
+async def list_models():
+    """List all available models."""
+    try:
+        return {
+            "models": llm_client.get_available_models(),
+            "default": llm_client.default_model
+        }
+    except Exception as e:
+        logger.error(f"Error listing models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@routers.v1.post("/models/default")
+async def set_default_model(model: str):
+    """Set the default model."""
+    try:
+        llm_client.set_default_model(model)
+        return {"message": f"Default model set to {model}"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error setting default model: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Main entry point
+if __name__ == "__main__":
+    # Get configuration
+    config = get_component_config()
+    port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT", 8003))
+    host = os.environ.get("RHETOR_HOST", "0.0.0.0")
     
-    # Use socket reuse for quick port reuse
-    from shared.utils.socket_server import run_with_socket_reuse
-    run_with_socket_reuse(
+    # Run the server
+    uvicorn.run(
         "rhetor.api.app:app",
         host=host,
         port=port,
-        log_level=log_level,
-        timeout_graceful_shutdown=3,
-        server_header=False,
-        access_log=False
+        reload=False,
+        log_level="info"
     )
-
-
-if __name__ == "__main__":
-    run_server()

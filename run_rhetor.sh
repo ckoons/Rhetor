@@ -35,7 +35,6 @@ mkdir -p "$LOG_DIR"
 # Error handling function
 handle_error() {
     echo -e "${RED}Error: $1${RESET}" >&2
-    ${TEKTON_ROOT}/scripts/tekton-register unregister --component rhetor
     exit 1
 }
 
@@ -44,21 +43,13 @@ if [ -d "venv" ]; then
     source venv/bin/activate
 fi
 
-# Register with Hermes using tekton-register
-echo -e "${YELLOW}Registering Rhetor with Hermes...${RESET}"
-${TEKTON_ROOT}/scripts/tekton-register register --component rhetor --config ${TEKTON_ROOT}/config/components/rhetor.yaml &
-REGISTER_PID=$!
-
-# Give registration a moment to complete
-sleep 2
-
 # Start the Rhetor service
 echo -e "${YELLOW}Starting Rhetor API server...${RESET}"
 python -m rhetor > "$LOG_DIR/rhetor.log" 2>&1 &
 RHETOR_PID=$!
 
 # Trap signals for graceful shutdown
-trap "${TEKTON_ROOT}/scripts/tekton-register unregister --component rhetor; kill $RHETOR_PID 2>/dev/null; exit" EXIT SIGINT SIGTERM
+trap "kill $RHETOR_PID 2>/dev/null; exit" EXIT SIGINT SIGTERM
 
 # Wait for the server to start
 echo -e "${YELLOW}Waiting for Rhetor to start...${RESET}"
