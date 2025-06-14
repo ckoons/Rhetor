@@ -13,7 +13,6 @@ import logging
 import time
 from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
-from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, Query, Path
@@ -29,12 +28,8 @@ if tekton_root not in sys.path:
     sys.path.insert(0, tekton_root)
 
 # Import shared utilities
-from shared.utils.hermes_registration import HermesRegistration, heartbeat_loop
+from shared.utils.global_config import GlobalConfig
 from shared.utils.logging_setup import setup_component_logging
-from shared.utils.env_config import get_component_config
-from shared.utils.errors import StartupError
-from shared.utils.startup import component_startup, StartupMetrics
-from shared.utils.shutdown import GracefulShutdown
 from shared.utils.health_check import create_health_response
 from shared.api import (
     create_standard_routers,
@@ -45,17 +40,7 @@ from shared.api import (
     EndpointInfo
 )
 
-from ..core.llm_client import LLMClient
-from ..core.model_router import ModelRouter
-from ..core.context_manager import ContextManager
-from ..core.prompt_engine import PromptEngine
-from ..core.template_manager import TemplateManager
-from ..core.prompt_registry import PromptRegistry
-from ..core.budget_manager import BudgetManager, BudgetPolicy, BudgetPeriod
-from ..core.specialist_router import SpecialistRouter
-from ..core.ai_specialist_manager import AISpecialistManager
-from ..core.ai_messaging_integration import AIMessagingIntegration
-from ..core.anthropic_max_config import AnthropicMaxConfig
+from ..core.rhetor_component import RhetorComponent
 from ..templates import system_prompts
 
 # Set up logging
@@ -66,269 +51,96 @@ COMPONENT_NAME = "rhetor"
 COMPONENT_VERSION = "0.1.0"
 COMPONENT_DESCRIPTION = "LLM orchestration and management service"
 
-# Initialize core components (will be set in lifespan)
-llm_client = None
-model_router = None
-specialist_router = None
-ai_specialist_manager = None
-ai_messaging_integration = None
-context_manager = None
-prompt_engine = None
-template_manager = None
-prompt_registry = None
-budget_manager = None
-anthropic_max_config = None
-start_time = None
-is_registered_with_hermes = False
-
-# Global variables for Hermes registration and heartbeat
-hermes_registration = None
-heartbeat_task = None
-mcp_bridge = None
-rhetor_port = None
+# Create component instance (singleton)
+component = RhetorComponent()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Lifespan context manager for Rhetor"""
-    global llm_client, model_router, specialist_router, ai_specialist_manager, ai_messaging_integration
-    global context_manager, prompt_engine, template_manager, prompt_registry, budget_manager
-    global anthropic_max_config, start_time, is_registered_with_hermes
-    global hermes_registration, heartbeat_task, mcp_bridge, rhetor_port
-    
-    # Startup
-    logger.info("Starting Rhetor initialization...")
-    
-    async def rhetor_startup():
-        """Initialize Rhetor components"""
-        global llm_client, model_router, specialist_router, ai_specialist_manager, ai_messaging_integration
-        global context_manager, prompt_engine, template_manager, prompt_registry, budget_manager
-        global anthropic_max_config, start_time, is_registered_with_hermes
-        global hermes_registration, heartbeat_task, mcp_bridge, rhetor_port
-        
-        try:
-            # Track startup time
-            import time
-            start_time = time.time()
-            
-            # Get configuration
-            config = get_component_config()
-            port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT"))
-            rhetor_port = port  # Store globally for health check
-            
-            # Register with Hermes
-            hermes_registration = HermesRegistration()
-            hermes_url = os.environ.get("HERMES_URL", "http://localhost:8001")
-            
-            try:
-                is_registered_with_hermes = await hermes_registration.register_component(
-                    component_name="rhetor",
-                    port=port,
-                    version="0.1.0",
-                    capabilities=["llm_orchestration", "template_management", "prompt_engineering"],
-                    metadata={"description": "LLM orchestration and management service"}
-                )
-                
-                if is_registered_with_hermes:
-                    logger.info("Successfully registered with Hermes")
-                    
-                    # Start heartbeat task
-                    heartbeat_task = asyncio.create_task(
-                        heartbeat_loop(hermes_registration, "rhetor", interval=30)
-                    )
-                    logger.info("Started Hermes heartbeat task")
-                    
-                    # Store registration in app state
-                    app.state.hermes_registration = hermes_registration
-                else:
-                    logger.warning("Failed to register with Hermes")
-            except Exception as e:
-                logger.warning(f"Error during Hermes registration: {e}")
-            
-            # Initialize core components
-            llm_client = LLMClient()
-            logger.info("LLM client initialized successfully")
-            
-            # Initialize template manager first
-            template_data_dir = os.path.join(
-                os.environ.get('TEKTON_DATA_DIR', 
-                              os.path.join(os.environ.get('TEKTON_ROOT', os.path.expanduser('~')), '.tekton', 'data')),
-                'rhetor', 'templates'
-            )
-            template_manager = TemplateManager(template_data_dir)
-            logger.info("Template manager initialized")
-            
-            # Initialize prompt registry
-            prompt_data_dir = os.path.join(
-                os.environ.get('TEKTON_DATA_DIR',
-                              os.path.join(os.environ.get('TEKTON_ROOT', os.path.expanduser('~')), '.tekton', 'data')),
-                'rhetor', 'prompts'
-            )
-            prompt_registry = PromptRegistry(prompt_data_dir)
-            logger.info("Prompt registry initialized")
-            
-            # Initialize enhanced context manager with token counting
-            context_manager = ContextManager(llm_client=llm_client)
-            logger.info("Initializing context manager...")
-            await asyncio.wait_for(context_manager.initialize(), timeout=5.0)
-            logger.info("Context manager initialized successfully")
-            
-            # Initialize Anthropic Max configuration
-            anthropic_max_config = AnthropicMaxConfig()
-            logger.info(f"Anthropic Max configuration initialized - enabled: {anthropic_max_config.enabled}")
-            
-            # Initialize budget manager for cost tracking and budget enforcement
-            budget_manager = BudgetManager()
-            
-            # Apply Anthropic Max budget override if enabled
-            if anthropic_max_config.enabled:
-                max_budget = anthropic_max_config.get_budget_override()
-                if max_budget:
-                    logger.info("Applying Anthropic Max budget override - unlimited tokens")
-                    # Budget manager will still track usage but not enforce limits
-            
-            logger.info("Budget manager initialized")
-            
-            # Initialize model router with budget manager
-            model_router = ModelRouter(llm_client, budget_manager=budget_manager)
-            logger.info("Model router initialized")
-            
-            # Initialize specialist router for AI specialist management
-            specialist_router = SpecialistRouter(llm_client, budget_manager=budget_manager)
-            logger.info("Specialist router initialized")
-            
-            # Initialize AI specialist manager
-            ai_specialist_manager = AISpecialistManager(llm_client, specialist_router)
-            specialist_router.set_specialist_manager(ai_specialist_manager)
-            logger.info("AI specialist manager initialized")
-            
-            # Start core AI specialists
-            try:
-                core_results = await ai_specialist_manager.start_core_specialists()
-                logger.info(f"Core AI specialists started: {core_results}")
-            except Exception as e:
-                logger.warning(f"Failed to start core AI specialists: {e}")
-            
-            # Initialize AI messaging integration with Hermes
-            ai_messaging_integration = AIMessagingIntegration(ai_specialist_manager, hermes_url, specialist_router)
-            try:
-                await ai_messaging_integration.initialize()
-                logger.info("AI messaging integration initialized")
-            except Exception as e:
-                logger.warning(f"Failed to initialize AI messaging integration: {e}")
-            
-            # Initialize prompt engine with template manager integration
-            prompt_engine = PromptEngine(template_manager)
-            logger.info("Prompt engine initialized")
-            
-            # Initialize Hermes MCP Bridge
-            try:
-                from rhetor.core.mcp.hermes_bridge import RhetorMCPBridge
-                mcp_bridge = RhetorMCPBridge(llm_client)
-                await mcp_bridge.initialize()
-                app.state.mcp_bridge = mcp_bridge
-                logger.info("Initialized Hermes MCP Bridge for FastMCP tools")
-            except Exception as e:
-                logger.warning(f"Failed to initialize MCP Bridge: {e}")
-            
-            # Initialize MCP Tools Integration with live components
-            try:
-                from rhetor.core.mcp.init_integration import (
-                    initialize_mcp_integration,
-                    setup_hermes_subscriptions,
-                    test_mcp_integration
-                )
-                
-                # Create the integration
-                mcp_integration = initialize_mcp_integration(
-                    specialist_manager=ai_specialist_manager,
-                    messaging_integration=ai_messaging_integration,
-                    hermes_url=hermes_url
-                )
-                
-                # Set up Hermes subscriptions for cross-component messaging
-                await setup_hermes_subscriptions(mcp_integration)
-                
-                # Test the integration if in debug mode
-                if logger.isEnabledFor(logging.DEBUG):
-                    await test_mcp_integration(mcp_integration)
-                
-                app.state.mcp_integration = mcp_integration
-                logger.info("MCP Tools Integration initialized with live components")
-                
-            except Exception as e:
-                logger.warning(f"Failed to initialize MCP Tools Integration: {e}")
-            
-            logger.info(f"Rhetor API initialized successfully on port {port}")
-            
-        except Exception as e:
-            logger.error(f"Error during Rhetor startup: {e}", exc_info=True)
-            raise StartupError(str(e), "rhetor", "STARTUP_FAILED")
-    
-    # Execute startup with metrics
+# Request/Response models
+class ChatRequest(TektonBaseModel):
+    """Chat request model"""
+    messages: List[Dict[str, str]]
+    model: Optional[str] = Field(None, description="Model to use (defaults to routing logic)")
+    temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
+    max_tokens: Optional[int] = Field(None, gt=0)
+    stream: Optional[bool] = Field(False, description="Enable streaming response")
+    context_id: Optional[str] = Field(None, description="Context ID for conversation history")
+    tools: Optional[List[Dict[str, Any]]] = Field(None, description="Tools available for the model")
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Tool choice configuration")
+    response_format: Optional[Dict[str, Any]] = Field(None, description="Response format configuration")
+    request_metadata: Optional[Dict[str, Any]] = Field(None, description="Additional request metadata")
+
+
+class ChatResponse(TektonBaseModel):
+    """Chat response model"""
+    content: str
+    model: str
+    usage: Optional[Dict[str, Any]] = None
+    context_id: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class TemplateRequest(TektonBaseModel):
+    """Template request model"""
+    name: str
+    content: str
+    description: Optional[str] = None
+    category: Optional[str] = None
+    tags: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class PromptRequest(TektonBaseModel):
+    """Prompt request model"""
+    template_name: str
+    variables: Optional[Dict[str, Any]] = None
+    context_id: Optional[str] = None
+
+
+class PromptRegistryRequest(TektonBaseModel):
+    """Prompt registry request model"""
+    name: str
+    template: str
+    description: Optional[str] = None
+    category: Optional[str] = None
+    version: Optional[str] = None
+    tags: Optional[List[str]] = None
+    examples: Optional[List[Dict[str, Any]]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class BudgetPolicyRequest(TektonBaseModel):
+    """Budget policy request model"""
+    name: str
+    max_cost: float
+    period: str  # hourly, daily, weekly, monthly
+    description: Optional[str] = None
+
+
+class ContextRequest(TektonBaseModel):
+    """Context request model"""
+    context_id: Optional[str] = None
+    messages: Optional[List[Dict[str, str]]] = None
+    max_tokens: Optional[int] = Field(None, description="Maximum context size in tokens")
+    metadata: Optional[Dict[str, Any]] = None
+
+
+# Startup callback for component initialization
+async def startup_callback():
+    """Component startup callback."""
+    global component
     try:
-        metrics = await component_startup("rhetor", rhetor_startup, timeout=30)
-        logger.info(f"Rhetor started successfully in {metrics.total_time:.2f}s")
+        await component.initialize(
+            capabilities=component.get_capabilities(),
+            metadata=component.get_metadata()
+        )
+        
+        # Initialize MCP components after component startup
+        await component.initialize_mcp_components()
+        
+        logger.info(f"Rhetor API server started successfully")
     except Exception as e:
         logger.error(f"Failed to start Rhetor: {e}")
         raise
-    
-    # Create shutdown handler
-    shutdown = GracefulShutdown("rhetor")
-    
-    # Register cleanup tasks
-    async def cleanup_hermes():
-        """Cleanup Hermes registration"""
-        if heartbeat_task:
-            heartbeat_task.cancel()
-            try:
-                await heartbeat_task
-            except asyncio.CancelledError:
-                pass
-        
-        if hermes_registration and hermes_registration.is_registered:
-            await hermes_registration.deregister("rhetor")
-            logger.info("Deregistered from Hermes")
-    
-    async def cleanup_components():
-        """Cleanup Rhetor components"""
-        try:
-            if ai_messaging_integration:
-                await ai_messaging_integration.cleanup()
-                logger.info("AI messaging integration cleaned up")
-            
-            if context_manager:
-                await context_manager.cleanup()
-                logger.info("Context manager cleaned up")
-            
-            if llm_client:
-                await llm_client.cleanup()
-                logger.info("LLM client cleaned up")
-        except Exception as e:
-            logger.warning(f"Error cleaning up Rhetor components: {e}")
-    
-    async def cleanup_mcp_bridge():
-        """Cleanup MCP bridge"""
-        global mcp_bridge
-        if mcp_bridge:
-            try:
-                await mcp_bridge.shutdown()
-                logger.info("MCP bridge cleaned up")
-            except Exception as e:
-                logger.warning(f"Error cleaning up MCP bridge: {e}")
-    
-    shutdown.register_cleanup(cleanup_hermes)
-    shutdown.register_cleanup(cleanup_components)
-    shutdown.register_cleanup(cleanup_mcp_bridge)
-    
-    yield
-    
-    # Shutdown
-    logger.info("Shutting down Rhetor LLM Orchestration API")
-    await shutdown.shutdown_sequence(timeout=10)
-    
-    # Socket release delay for macOS
-    await asyncio.sleep(0.5)
 
 
 # Initialize FastAPI app with standard configuration
@@ -338,7 +150,7 @@ app = FastAPI(
         component_version=COMPONENT_VERSION,
         component_description=COMPONENT_DESCRIPTION
     ),
-    lifespan=lifespan
+    on_startup=[startup_callback]
 )
 
 # Add FastMCP endpoints
@@ -349,15 +161,7 @@ try:
 except ImportError as e:
     logger.warning(f"FastMCP endpoints not available: {e}")
 
-# Add AI Specialist endpoints
-try:
-    from .ai_specialist_endpoints import router as ai_router
-    app.include_router(ai_router)
-    logger.info("AI Specialist endpoints added to Rhetor API")
-except ImportError as e:
-    logger.warning(f"AI Specialist endpoints not available: {e}")
-
-# Add CORS middleware
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -369,11 +173,13 @@ app.add_middleware(
 # Create standard routers
 routers = create_standard_routers(COMPONENT_NAME)
 
-
 # Root endpoint
 @routers.root.get("/")
 async def root():
-    """Root endpoint providing basic API information."""
+    """Root endpoint for the Rhetor API."""
+    global_config = GlobalConfig.get_instance()
+    port = global_config.config.rhetor.port
+    
     return {
         "name": f"{COMPONENT_NAME} LLM Orchestration API",
         "version": COMPONENT_VERSION,
@@ -382,227 +188,409 @@ async def root():
         "documentation": "/api/v1/docs"
     }
 
-
 # Health check endpoint
 @routers.root.get("/health")
-async def health_check():
-    """Check the health of the Rhetor service following Tekton standards."""
-    try:
-        return create_health_response(
-            component_name=COMPONENT_NAME,
-            port=rhetor_port,
-            version=COMPONENT_VERSION,
-            status="healthy" if llm_client and llm_client.is_initialized else "unhealthy",
-            registered=is_registered_with_hermes,
-            details={
-                "llm_client": llm_client is not None and llm_client.is_initialized,
-                "context_manager": context_manager is not None,
-                "template_manager": template_manager is not None,
-                "budget_manager": budget_manager is not None,
-                "specialist_manager": ai_specialist_manager is not None,
-                "prompt_engine": prompt_engine is not None,
-                "uptime": time.time() - start_time if start_time else 0
-            }
-        )
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        raise HTTPException(status_code=503, detail="Service unhealthy")
-
+async def health():
+    """Check the health of the Rhetor component following Tekton standards."""
+    global_config = GlobalConfig.get_instance()
+    port = global_config.config.rhetor.port
+    
+    # Get component status
+    if component:
+        component_status = component.get_component_status()
+        health_status = "healthy" if component.initialized else "degraded"
+    else:
+        component_status = {}
+        health_status = "degraded"
+    
+    return create_health_response(
+        component_name=COMPONENT_NAME,
+        port=port,
+        version=COMPONENT_VERSION,
+        status=health_status,
+        registered=component.global_config.is_registered_with_hermes if component else False,
+        details=component_status
+    )
 
 # Ready endpoint
-routers.root.add_api_route(
-    "/ready",
-    create_ready_endpoint(
+@routers.root.get("/ready")
+async def ready():
+    """Readiness check endpoint."""
+    ready_check = create_ready_endpoint(
         component_name=COMPONENT_NAME,
         component_version=COMPONENT_VERSION,
-        start_time=start_time or 0,
-        readiness_check=lambda: llm_client is not None and context_manager is not None
-    ),
-    methods=["GET"]
-)
+        start_time=time.time(),
+        readiness_check=lambda: component and component.initialized
+    )
+    return await ready_check()
 
-# API discovery endpoint
-routers.root.add_api_route(
-    "/api",
-    create_discovery_endpoint(
-        COMPONENT_NAME,
-        COMPONENT_VERSION,
-        COMPONENT_DESCRIPTION,
+# Discovery endpoint
+@routers.v1.get("/discovery")
+async def discovery():
+    """Service discovery endpoint."""
+    discovery_check = create_discovery_endpoint(
+        component_name=COMPONENT_NAME,
+        component_version=COMPONENT_VERSION,
+        component_description=COMPONENT_DESCRIPTION,
         endpoints=[
-            EndpointInfo(
-                path="/api/v1/llm",
-                method="POST",
-                description="Generate LLM response"
-            ),
-            EndpointInfo(
-                path="/api/v1/models",
-                method="GET",
-                description="List available models"
-            ),
-            EndpointInfo(
-                path="/api/v1/models",
-                method="POST",
-                description="Configure model settings"
-            ),
-            EndpointInfo(
-                path="/api/v1/templates",
-                method="GET",
-                description="List templates"
-            ),
-            EndpointInfo(
-                path="/api/v1/templates",
-                method="POST",
-                description="Create template"
-            ),
-            EndpointInfo(
-                path="/api/v1/templates",
-                method="PUT",
-                description="Update template"
-            ),
-            EndpointInfo(
-                path="/api/v1/templates",
-                method="DELETE",
-                description="Delete template"
-            ),
-            EndpointInfo(
-                path="/api/v1/prompts",
-                method="GET",
-                description="List prompts"
-            ),
-            EndpointInfo(
-                path="/api/v1/prompts",
-                method="POST",
-                description="Create prompt"
-            ),
-            EndpointInfo(
-                path="/api/v1/context",
-                method="GET",
-                description="Get context"
-            ),
-            EndpointInfo(
-                path="/api/v1/context",
-                method="POST",
-                description="Create context"
-            ),
-            EndpointInfo(
-                path="/api/v1/context",
-                method="PUT",
-                description="Update context"
-            ),
-            EndpointInfo(
-                path="/api/v1/context",
-                method="DELETE",
-                description="Delete context"
-            ),
-            EndpointInfo(
-                path="/ws",
-                method="GET",
-                description="WebSocket for streaming"
-            )
+            EndpointInfo(path="/api/v1/chat", method="POST", description="Send chat messages"),
+            EndpointInfo(path="/api/v1/chat/stream", method="POST", description="Stream chat responses"),
+            EndpointInfo(path="/api/v1/templates", method="*", description="Template management"),
+            EndpointInfo(path="/api/v1/prompts", method="*", description="Prompt operations"),
+            EndpointInfo(path="/api/v1/registry", method="*", description="Prompt registry"),
+            EndpointInfo(path="/api/v1/context", method="*", description="Context management"),
+            EndpointInfo(path="/api/v1/models", method="GET", description="List available models"),
+            EndpointInfo(path="/api/v1/budget", method="*", description="Budget management"),
+            EndpointInfo(path="/api/v1/specialists", method="*", description="AI specialist management"),
+            EndpointInfo(path="/ws", method="WEBSOCKET", description="WebSocket for streaming")
         ],
-        capabilities=[
-            "llm_orchestration",
-            "multi_provider_support",
-            "intelligent_routing",
-            "context_management",
-            "prompt_templates",
-            "streaming",
-            "model_management"
-        ]
-    ),
-    methods=["GET"]
-)
+        capabilities=component.get_capabilities() if component else [],
+        dependencies={
+            "hermes": "http://localhost:8001"
+        },
+        metadata=component.get_metadata() if component else {}
+    )
+    return await discovery_check()
 
 
-# Model for LLM generation requests
-class LLMRequest(TektonBaseModel):
-    """Request model for LLM generation."""
-    prompt: str = Field(..., description="The prompt to send to the LLM")
-    model: Optional[str] = Field(None, description="Specific model to use")
-    temperature: Optional[float] = Field(0.7, ge=0.0, le=2.0, description="Temperature for response generation")
-    max_tokens: Optional[int] = Field(None, ge=1, description="Maximum tokens to generate")
-    stream: Optional[bool] = Field(False, description="Whether to stream the response")
-    context: Optional[Dict[str, Any]] = Field(None, description="Additional context for the request")
-    specialist: Optional[str] = Field(None, description="AI specialist to route the request to")
-
-
-class LLMResponse(TektonBaseModel):
-    """Response model for LLM generation."""
-    content: str = Field(..., description="Generated content")
-    model: str = Field(..., description="Model used for generation")
-    usage: Dict[str, int] = Field(..., description="Token usage statistics")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional response metadata")
-
-
-# LLM generation endpoint
-@routers.v1.post("/llm", response_model=LLMResponse)
-async def generate_llm_response(request: LLMRequest) -> LLMResponse:
-    """Generate a response from the LLM."""
+# Chat endpoints
+@routers.v1.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """Send a chat message to the LLM."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
     try:
-        # Route through AI specialist if specified
-        if request.specialist and ai_specialist_manager:
-            specialist = ai_specialist_manager.get_specialist(request.specialist)
-            if not specialist:
-                raise HTTPException(status_code=404, detail=f"Specialist '{request.specialist}' not found")
-            
-            # Send message to specialist
-            response = await ai_specialist_manager.send_message_to_specialist(
-                specialist_id=request.specialist,
-                message=request.prompt,
-                context=request.context
-            )
-            
-            return LLMResponse(
-                content=response["response"],
-                model=response.get("model", "unknown"),
-                usage=response.get("usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}),
-                metadata={
-                    "specialist": request.specialist,
-                    "conversation_id": response.get("conversation_id")
-                }
+        # Get or create context
+        context = None
+        if request.context_id:
+            context = await component.context_manager.get_context(request.context_id)
+            if not context:
+                raise HTTPException(status_code=404, detail=f"Context not found: {request.context_id}")
+        
+        # Route the request
+        result = await component.model_router.route_request(
+            messages=request.messages,
+            model=request.model,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            tools=request.tools,
+            tool_choice=request.tool_choice,
+            response_format=request.response_format,
+            request_metadata=request.request_metadata
+        )
+        
+        # Update context if provided
+        if context:
+            await component.context_manager.add_messages(
+                request.context_id,
+                request.messages + [{"role": "assistant", "content": result["content"]}]
             )
         
-        # Regular LLM routing
-        if request.model:
-            # Use specific model
-            response = await llm_client.generate(
-                prompt=request.prompt,
-                model=request.model,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens
-            )
-        else:
-            # Use model router for intelligent routing
-            response = await model_router.route_request(
-                prompt=request.prompt,
-                context=request.context,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens
-            )
-        
-        # Track budget usage
-        if budget_manager:
-            await budget_manager.track_usage(
-                model=response["model"],
-                prompt_tokens=response["usage"]["prompt_tokens"],
-                completion_tokens=response["usage"]["completion_tokens"],
-                cost=response.get("cost", 0.0)
-            )
-        
-        return LLMResponse(
-            content=response["content"],
-            model=response["model"],
-            usage=response["usage"],
-            metadata=response.get("metadata")
+        return ChatResponse(
+            content=result["content"],
+            model=result["model"],
+            usage=result.get("usage"),
+            context_id=request.context_id,
+            metadata=result.get("metadata")
         )
         
     except Exception as e:
-        logger.error(f"Error generating LLM response: {e}")
+        logger.error(f"Error processing chat request: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Mount standard routers
-mount_standard_routers(app, routers)
+@routers.v1.post("/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """Stream a chat response from the LLM."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    async def generate():
+        try:
+            # Route the request with streaming
+            async for chunk in component.model_router.route_request_stream(
+                messages=request.messages,
+                model=request.model,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                tools=request.tools,
+                tool_choice=request.tool_choice,
+                response_format=request.response_format,
+                request_metadata=request.request_metadata
+            ):
+                yield {"data": json.dumps(chunk)}
+        except Exception as e:
+            logger.error(f"Error in streaming chat: {e}")
+            yield {"data": json.dumps({"error": str(e)})}
+    
+    return EventSourceResponse(generate())
+
+
+# Template management endpoints
+@routers.v1.get("/templates")
+async def list_templates(category: Optional[str] = None):
+    """List all available templates."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    templates = await component.template_manager.list_templates(category=category)
+    return {"templates": templates}
+
+
+@routers.v1.get("/templates/{name}")
+async def get_template(name: str):
+    """Get a specific template by name."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    template = await component.template_manager.get_template(name)
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template not found: {name}")
+    return template
+
+
+@routers.v1.post("/templates")
+async def create_template(request: TemplateRequest):
+    """Create a new template."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    try:
+        await component.template_manager.save_template(
+            name=request.name,
+            content=request.content,
+            description=request.description,
+            category=request.category,
+            tags=request.tags,
+            metadata=request.metadata
+        )
+        return {"message": f"Template '{request.name}' created successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@routers.v1.put("/templates/{name}")
+async def update_template(name: str, request: TemplateRequest):
+    """Update an existing template."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    try:
+        await component.template_manager.update_template(
+            name=name,
+            content=request.content,
+            description=request.description,
+            category=request.category,
+            tags=request.tags,
+            metadata=request.metadata
+        )
+        return {"message": f"Template '{name}' updated successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@routers.v1.delete("/templates/{name}")
+async def delete_template(name: str):
+    """Delete a template."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    try:
+        await component.template_manager.delete_template(name)
+        return {"message": f"Template '{name}' deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# Prompt operations
+@routers.v1.post("/prompts/render")
+async def render_prompt(request: PromptRequest):
+    """Render a prompt using a template."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    try:
+        result = await component.prompt_engine.render_prompt(
+            template_name=request.template_name,
+            variables=request.variables or {},
+            context_id=request.context_id
+        )
+        return {"prompt": result}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# Prompt registry endpoints
+@routers.v1.get("/registry")
+async def list_registry_prompts(category: Optional[str] = None):
+    """List all prompts in the registry."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    prompts = component.prompt_registry.list_prompts(category=category)
+    return {"prompts": prompts}
+
+
+@routers.v1.get("/registry/{name}")
+async def get_registry_prompt(name: str, version: Optional[str] = None):
+    """Get a specific prompt from the registry."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    prompt = component.prompt_registry.get_prompt(name, version=version)
+    if not prompt:
+        raise HTTPException(status_code=404, detail=f"Prompt not found: {name}")
+    return prompt
+
+
+@routers.v1.post("/registry")
+async def register_prompt(request: PromptRegistryRequest):
+    """Register a new prompt."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    try:
+        component.prompt_registry.register_prompt(
+            name=request.name,
+            template=request.template,
+            description=request.description,
+            category=request.category,
+            version=request.version,
+            tags=request.tags,
+            examples=request.examples,
+            metadata=request.metadata
+        )
+        return {"message": f"Prompt '{request.name}' registered successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# Context management endpoints
+@routers.v1.post("/context", response_model=Dict[str, str])
+async def create_context(request: ContextRequest):
+    """Create a new context."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    context_id = await component.context_manager.create_context(
+        context_id=request.context_id,
+        messages=request.messages,
+        max_tokens=request.max_tokens,
+        metadata=request.metadata
+    )
+    return {"context_id": context_id}
+
+
+@routers.v1.get("/context/{context_id}")
+async def get_context(context_id: str):
+    """Get context information."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    context = await component.context_manager.get_context(context_id)
+    if not context:
+        raise HTTPException(status_code=404, detail=f"Context not found: {context_id}")
+    return context
+
+
+@routers.v1.delete("/context/{context_id}")
+async def delete_context(context_id: str):
+    """Delete a context."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    await component.context_manager.delete_context(context_id)
+    return {"message": f"Context '{context_id}' deleted successfully"}
+
+
+# Model management endpoints
+@routers.v1.get("/models")
+async def list_models():
+    """List available models."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    models = await component.llm_client.list_models()
+    return {"models": models}
+
+
+# Budget management endpoints
+@routers.v1.get("/budget/usage")
+async def get_budget_usage():
+    """Get current budget usage."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    usage = component.budget_manager.get_usage_summary()
+    return usage
+
+
+@routers.v1.post("/budget/policies")
+async def create_budget_policy(request: BudgetPolicyRequest):
+    """Create a new budget policy."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    try:
+        policy_id = component.budget_manager.create_policy(
+            name=request.name,
+            max_cost=request.max_cost,
+            period=request.period,
+            description=request.description
+        )
+        return {"policy_id": policy_id, "message": "Budget policy created successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# AI Specialist endpoints
+@routers.v1.get("/specialists")
+async def list_specialists():
+    """List all AI specialists."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    specialists = await component.ai_specialist_manager.list_specialists()
+    return {"specialists": specialists}
+
+
+@routers.v1.get("/specialists/{specialist_id}")
+async def get_specialist(specialist_id: str):
+    """Get information about a specific specialist."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    specialist = await component.ai_specialist_manager.get_specialist(specialist_id)
+    if not specialist:
+        raise HTTPException(status_code=404, detail=f"Specialist not found: {specialist_id}")
+    return specialist
+
+
+@routers.v1.post("/specialists/{specialist_id}/start")
+async def start_specialist(specialist_id: str):
+    """Start a specialist."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    try:
+        result = await component.ai_specialist_manager.start_specialist(specialist_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@routers.v1.post("/specialists/{specialist_id}/stop")
+async def stop_specialist(specialist_id: str):
+    """Stop a specialist."""
+    if not component or not component.initialized:
+        raise HTTPException(status_code=503, detail="Rhetor not initialized")
+    
+    try:
+        result = await component.ai_specialist_manager.stop_specialist(specialist_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # WebSocket endpoint for streaming
@@ -616,128 +604,59 @@ async def websocket_endpoint(websocket: WebSocket):
             # Receive message
             data = await websocket.receive_json()
             
-            # Validate request
-            if "prompt" not in data:
+            if not component or not component.initialized:
                 await websocket.send_json({
-                    "error": "Missing required field: prompt"
+                    "error": "Rhetor not initialized",
+                    "type": "error"
                 })
                 continue
             
-            # Generate streaming response
+            # Process the request
             try:
-                model = data.get("model")
-                specialist = data.get("specialist")
+                # Stream the response
+                async for chunk in component.model_router.route_request_stream(
+                    messages=data.get("messages", []),
+                    model=data.get("model"),
+                    temperature=data.get("temperature"),
+                    max_tokens=data.get("max_tokens"),
+                    tools=data.get("tools"),
+                    tool_choice=data.get("tool_choice"),
+                    response_format=data.get("response_format"),
+                    request_metadata=data.get("request_metadata")
+                ):
+                    await websocket.send_json(chunk)
                 
-                # Route through specialist if specified
-                if specialist and ai_specialist_manager:
-                    # Stream from specialist
-                    async for chunk in ai_specialist_manager.stream_to_specialist(
-                        specialist_id=specialist,
-                        message=data["prompt"],
-                        context=data.get("context")
-                    ):
-                        await websocket.send_json({
-                            "type": "chunk",
-                            "content": chunk.get("content", ""),
-                            "metadata": chunk.get("metadata")
-                        })
-                    
-                    await websocket.send_json({"type": "complete"})
-                else:
-                    # Regular streaming
-                    async for chunk in llm_client.stream(
-                        prompt=data["prompt"],
-                        model=model,
-                        temperature=data.get("temperature", 0.7),
-                        max_tokens=data.get("max_tokens")
-                    ):
-                        await websocket.send_json({
-                            "type": "chunk",
-                            "content": chunk["content"]
-                        })
-                    
-                    await websocket.send_json({"type": "complete"})
-                    
-            except Exception as e:
-                logger.error(f"Error in streaming: {e}")
+                # Send completion marker
                 await websocket.send_json({
-                    "type": "error",
-                    "error": str(e)
+                    "type": "stream_complete"
                 })
                 
+            except Exception as e:
+                logger.error(f"Error processing WebSocket message: {e}")
+                await websocket.send_json({
+                    "error": str(e),
+                    "type": "error"
+                })
+    
     except WebSocketDisconnect:
-        logger.info("WebSocket disconnected")
+        logger.info("WebSocket client disconnected")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
-        await websocket.close()
 
 
-# Template management endpoints
-@routers.v1.get("/templates")
-async def list_templates():
-    """List all available templates."""
-    try:
-        templates = template_manager.list_templates()
-        return {"templates": templates}
-    except Exception as e:
-        logger.error(f"Error listing templates: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# Mount standard routers
+mount_standard_routers(app, routers)
 
 
-@routers.v1.get("/templates/{template_id}")
-async def get_template(template_id: str = Path(..., description="Template ID")):
-    """Get a specific template by ID."""
-    try:
-        template = template_manager.get_template(template_id)
-        if not template:
-            raise HTTPException(status_code=404, detail="Template not found")
-        return template
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting template: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Model management endpoints
-@routers.v1.get("/models")
-async def list_models():
-    """List all available models."""
-    try:
-        return {
-            "models": llm_client.get_available_models(),
-            "default": llm_client.default_model
-        }
-    except Exception as e:
-        logger.error(f"Error listing models: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@routers.v1.post("/models/default")
-async def set_default_model(model: str):
-    """Set the default model."""
-    try:
-        llm_client.set_default_model(model)
-        return {"message": f"Default model set to {model}"}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error setting default model: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Main entry point
 if __name__ == "__main__":
-    # Get configuration
-    config = get_component_config()
-    port = config.rhetor.port if hasattr(config, 'rhetor') else int(os.environ.get("RHETOR_PORT", 8003))
-    host = os.environ.get("RHETOR_HOST", "0.0.0.0")
+    from shared.utils.socket_server import run_component_server
     
-    # Run the server
-    uvicorn.run(
-        "rhetor.api.app:app",
-        host=host,
-        port=port,
-        reload=False,
-        log_level="info"
+    global_config = GlobalConfig.get_instance()
+    port = global_config.config.rhetor.port
+    
+    run_component_server(
+        component_name="rhetor",
+        app_module="rhetor.api.app",
+        default_port=port,
+        reload=False
     )
