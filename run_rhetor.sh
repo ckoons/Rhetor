@@ -1,77 +1,29 @@
 #!/bin/bash
-# Rhetor LLM Management System - Launch Script
 
-# ANSI color codes for terminal output
-BLUE="\033[94m"
-GREEN="\033[92m"
-YELLOW="\033[93m"
-RED="\033[91m"
-BOLD="\033[1m"
-RESET="\033[0m"
+# This script starts the Rhetor server with the appropriate environment variables
 
-echo -e "${BLUE}${BOLD}Starting Rhetor LLM Management System...${RESET}"
-
-# Find Tekton root directory
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-if [[ "$SCRIPT_DIR" == *"/utils" ]]; then
-    # Script is running from a symlink in utils
-    TEKTON_ROOT=$(cd "$SCRIPT_DIR" && cd "$(readlink "${BASH_SOURCE[0]}" | xargs dirname | xargs dirname)" && pwd)
-else
-    # Script is running from Rhetor directory
-    TEKTON_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-fi
-
-# Ensure we're in the correct directory
+# Ensure the script is run from the Rhetor directory
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TEKTON_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 # Set up environment and Python path
 source "$TEKTON_ROOT/shared/utils/setup_env.sh"
 setup_tekton_env "$SCRIPT_DIR" "$TEKTON_ROOT"
 
-# Create log directories
-LOG_DIR="${TEKTON_LOG_DIR:-$TEKTON_ROOT/.tekton/logs}"
-mkdir -p "$LOG_DIR"
-
-# Error handling function
-handle_error() {
-    echo -e "${RED}Error: $1${RESET}" >&2
-    exit 1
-}
-
-# Check if virtual environment exists
-if [ -d "venv" ]; then
-    source venv/bin/activate
+# Load environment variables if .env file exists
+if [ -f .env ]; then
+    set -a
+    source .env
+    set +a
 fi
 
-# Start the Rhetor service
-echo -e "${YELLOW}Starting Rhetor API server...${RESET}"
-python -m rhetor > "$LOG_DIR/rhetor.log" 2>&1 &
-RHETOR_PID=$!
+# RHETOR_PORT must be set in environment - no hardcoded defaults per Single Port Architecture
+if [ -z "$RHETOR_PORT" ]; then
+    echo "Error: RHETOR_PORT not set in environment"
+    echo "Please configure port in ~/.env.tekton or system environment"
+    exit 1
+fi
 
-# Trap signals for graceful shutdown
-trap "kill $RHETOR_PID 2>/dev/null; exit" EXIT SIGINT SIGTERM
-
-# Wait for the server to start
-echo -e "${YELLOW}Waiting for Rhetor to start...${RESET}"
-for i in {1..30}; do
-    if curl -s http://localhost:$RHETOR_PORT/health >/dev/null; then
-        echo -e "${GREEN}Rhetor started successfully on port $RHETOR_PORT${RESET}"
-        echo -e "${GREEN}API available at: http://localhost:$RHETOR_PORT/api${RESET}"
-        echo -e "${GREEN}WebSocket available at: ws://localhost:$RHETOR_PORT/ws${RESET}"
-        break
-    fi
-    
-    # Check if the process is still running
-    if ! kill -0 $RHETOR_PID 2>/dev/null; then
-        echo -e "${RED}Rhetor process terminated unexpectedly${RESET}"
-        cat "$LOG_DIR/rhetor.log"
-        handle_error "Rhetor failed to start"
-    fi
-    
-    echo -n "."
-    sleep 1
-done
-
-# Keep the script running to maintain registration
-echo -e "${BLUE}Rhetor is running. Press Ctrl+C to stop.${RESET}"
-wait $RHETOR_PID
+# Start Rhetor API server
+python -m rhetor "$@"
