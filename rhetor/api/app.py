@@ -161,6 +161,14 @@ try:
 except ImportError as e:
     logger.warning(f"FastMCP endpoints not available: {e}")
 
+# Add AI Specialist endpoints
+try:
+    from .ai_specialist_endpoints import router as ai_router
+    app.include_router(ai_router)
+    logger.info("AI Specialist endpoints added to Rhetor API")
+except ImportError as e:
+    logger.warning(f"AI Specialist endpoints not available: {e}")
+
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,

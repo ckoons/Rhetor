@@ -156,8 +156,13 @@ class SpecialistRouter(ModelRouter):
         model_config = config.model_config.copy()
         
         # Use specialist's system prompt if not overridden
-        if not system_prompt and "system_prompt" in model_config.get("options", {}):
-            system_prompt = model_config["options"]["system_prompt"]
+        if not system_prompt:
+            # Check in personality first (where ComponentSpecialistRegistry stores it)
+            if hasattr(config, 'personality') and "system_prompt" in config.personality:
+                system_prompt = config.personality["system_prompt"]
+            # Fall back to options if available
+            elif "system_prompt" in model_config.get("options", {}):
+                system_prompt = model_config["options"]["system_prompt"]
             
         # Merge any additional options
         if options:

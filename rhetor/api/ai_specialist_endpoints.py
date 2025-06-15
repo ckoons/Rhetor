@@ -74,7 +74,13 @@ router = APIRouter(prefix="/api/ai", tags=["AI Specialists"])
 
 def get_managers():
     """Get AI specialist managers from app state"""
-    from ..api.app import ai_specialist_manager, ai_messaging_integration, anthropic_max_config
+    from ..api.app import component
+    
+    # Get managers from the component instance
+    ai_specialist_manager = getattr(component, 'ai_specialist_manager', None)
+    ai_messaging_integration = getattr(component, 'ai_messaging_integration', None)
+    anthropic_max_config = getattr(component, 'anthropic_max_config', None)
+    
     return ai_specialist_manager, ai_messaging_integration, anthropic_max_config
 
 # Endpoints
@@ -217,8 +223,8 @@ async def deactivate_specialist(specialist_id: str = Path(..., description="Spec
 
 @router.post("/specialists/{specialist_id}/message")
 async def message_specialist(
-    specialist_id: str = Path(..., description="Specialist ID"),
-    request: SpecialistMessageRequest = None
+    request: SpecialistMessageRequest,
+    specialist_id: str = Path(..., description="Specialist ID")
 ):
     """Send a message to an AI specialist"""
     specialist_manager, _, _ = get_managers()
@@ -233,23 +239,39 @@ async def message_specialist(
         # Ensure specialist is active
         config = specialist_manager.specialists[specialist_id]
         if config.status != "active":
-            raise HTTPException(status_code=400, detail=f"Specialist {specialist_id} is not active")
+            # Try to activate the specialist
+            await specialist_manager.create_specialist(specialist_id)
+            config = specialist_manager.specialists[specialist_id]
+            if config.status != "active":
+                raise HTTPException(status_code=400, detail=f"Specialist {specialist_id} could not be activated")
         
-        # Send message through specialist manager
-        message_id = await specialist_manager.send_message(
-            sender_id="user",
-            receiver_id=specialist_id,
-            content=request.message,
-            message_type="chat"
+        # Get the component instance to access specialist router
+        from ..api.app import component
+        if not hasattr(component, 'specialist_router'):
+            raise HTTPException(status_code=503, detail="Specialist router not initialized")
+            
+        specialist_router = component.specialist_router
+        
+        # Route the message to the specialist
+        response = await specialist_router.route_to_specialist(
+            specialist_id=specialist_id,
+            message=request.message,
+            context_id=request.context_id,
+            streaming=False,  # For now, return full response
+            options=request.options
         )
         
-        # For now, just acknowledge the message was sent
-        # In a real implementation, we'd wait for the response
+        # Extract the response content
+        if isinstance(response, dict):
+            content = response.get("content", response.get("message", response.get("response", "No response")))
+        else:
+            content = str(response)
+            
+        # Return the response
         return {
             "success": True,
             "specialist_id": specialist_id,
-            "message_id": message_id,
-            "response": "Message sent to specialist"
+            "response": content
         }
         
     except HTTPException:

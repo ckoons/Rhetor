@@ -26,6 +26,7 @@ class RhetorComponent(StandardComponentBase):
         self.anthropic_max_config = None
         self.mcp_bridge = None
         self.mcp_integration = None
+        self.component_specialist_registry = None
         self.initialized = False
         
     async def _component_specific_init(self):
@@ -42,6 +43,7 @@ class RhetorComponent(StandardComponentBase):
         from rhetor.core.ai_specialist_manager import AISpecialistManager
         from rhetor.core.ai_messaging_integration import AIMessagingIntegration
         from rhetor.core.anthropic_max_config import AnthropicMaxConfig
+        from rhetor.core.component_specialists import ComponentSpecialistRegistry
         
         try:
             # Initialize core components
@@ -93,6 +95,18 @@ class RhetorComponent(StandardComponentBase):
             self.ai_specialist_manager = AISpecialistManager(self.llm_client, self.specialist_router)
             self.specialist_router.set_specialist_manager(self.ai_specialist_manager)
             logger.info("AI specialist manager initialized")
+            
+            # Initialize component specialist registry
+            self.component_specialist_registry = ComponentSpecialistRegistry(self.ai_specialist_manager)
+            logger.info("Component specialist registry initialized")
+            
+            # Ensure rhetor-orchestrator specialist is available
+            try:
+                rhetor_specialist = await self.component_specialist_registry.ensure_specialist("rhetor")
+                if rhetor_specialist:
+                    logger.info(f"Rhetor orchestrator specialist ready: {rhetor_specialist.specialist_id}")
+            except Exception as e:
+                logger.warning(f"Failed to ensure rhetor specialist: {e}")
             
             # Start core AI specialists
             try:
