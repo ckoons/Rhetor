@@ -6,22 +6,32 @@ replacing mock implementations with actual functionality.
 """
 
 import logging
+import os
+import sys
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 from rhetor.core.ai_specialist_manager import AISpecialistManager
 from rhetor.core.ai_messaging_integration import AIMessagingIntegration
 
+# Ensure Hermes is in the Python path for clean imports
+tekton_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
+hermes_path = os.path.join(tekton_root, 'Hermes')
+if os.path.exists(hermes_path) and hermes_path not in sys.path:
+    sys.path.insert(0, hermes_path)
+
 # Import Hermes message bus - handle import error gracefully
 try:
-    from Hermes.hermes.core.message_bus import MessageBus
+    # Try direct import (works when Hermes is in sys.path)
+    from hermes.core.message_bus import MessageBus
 except ImportError:
     try:
-        from hermes.core.message_bus import MessageBus
+        # Fallback to full path (works when Tekton root is in sys.path)
+        from Hermes.hermes.core.message_bus import MessageBus
     except ImportError:
         MessageBus = None
         import logging
-        logging.getLogger(__name__).warning("Hermes MessageBus not available")
+        logging.getLogger(__name__).warning("Hermes MessageBus not available - inter-component messaging disabled")
 
 logger = logging.getLogger(__name__)
 
