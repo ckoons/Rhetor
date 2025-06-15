@@ -46,6 +46,7 @@ class RhetorComponent(StandardComponentBase):
         try:
             # Initialize core components
             self.llm_client = LLMClient()
+            await self.llm_client.initialize()
             logger.info("LLM client initialized successfully")
             
             # Initialize template manager first

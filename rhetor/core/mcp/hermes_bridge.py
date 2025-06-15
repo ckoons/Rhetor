@@ -30,9 +30,10 @@ class RhetorMCPBridge(MCPService):
         
     async def initialize(self):
         """Initialize the MCP service and register with Hermes."""
-        await super().initialize()
+        # Initialize MCP service base (but don't call super().initialize() which would register tools too early)
+        logger.info(f"Initializing MCP service for {self.component_name}")
         
-        # Create Hermes client
+        # Create Hermes client FIRST
         config = MCPConfig.from_env(self.component_name)
         self.hermes_client = HermesMCPClient(
             hermes_url=config.hermes_url,
@@ -49,9 +50,15 @@ class RhetorMCPBridge(MCPService):
             logger.error(f"Failed to load FastMCP tools: {e}")
             self._fastmcp_tools = []
             
-        # Register tools with both local registry and Hermes
+        # NOW register tools with both local registry and Hermes
         await self.register_default_tools()
         await self.register_fastmcp_tools()
+        
+        # Register with Hermes if URL provided
+        if self.hermes_url:
+            await self.register_with_hermes()
+            
+        logger.info(f"MCP service initialized for {self.component_name}")
         
     async def register_default_tools(self):
         """Register standard tools like health check and component info."""

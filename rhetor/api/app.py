@@ -613,16 +613,30 @@ async def websocket_endpoint(websocket: WebSocket):
             
             # Process the request
             try:
+                # Validate messages
+                messages = data.get("messages", [])
+                if not messages:
+                    await websocket.send_json({
+                        "error": "No messages provided. At least one message is required.",
+                        "type": "error"
+                    })
+                    continue
+                
                 # Stream the response
-                async for chunk in component.model_router.route_request_stream(
-                    messages=data.get("messages", []),
-                    model=data.get("model"),
-                    temperature=data.get("temperature"),
-                    max_tokens=data.get("max_tokens"),
-                    tools=data.get("tools"),
-                    tool_choice=data.get("tool_choice"),
-                    response_format=data.get("response_format"),
-                    request_metadata=data.get("request_metadata")
+                async for chunk in await component.model_router.route_chat_request(
+                    messages=messages,
+                    context_id=data.get("context_id", "websocket-default"),
+                    task_type=data.get("task_type", "chat"),
+                    component=data.get("component"),
+                    system_prompt=data.get("system_prompt"),
+                    streaming=True,
+                    override_config={
+                        "model": data.get("model"),
+                        "options": {
+                            "temperature": data.get("temperature"),
+                            "max_tokens": data.get("max_tokens")
+                        }
+                    } if data.get("model") else None
                 ):
                     await websocket.send_json(chunk)
                 

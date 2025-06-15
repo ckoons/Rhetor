@@ -170,13 +170,18 @@ class AnthropicProvider(LLMProvider):
         
         try:
             # Create a streaming request to Claude
-            stream = self.client.messages.stream(
-                model=model,
-                max_tokens=options.get("max_tokens", self.default_max_tokens),
-                temperature=options.get("temperature", self.default_temperature),
-                system=system_prompt,
-                messages=[{"role": "user", "content": message}]
-            )
+            kwargs = {
+                "model": model,
+                "max_tokens": options.get("max_tokens", self.default_max_tokens),
+                "temperature": options.get("temperature", self.default_temperature),
+                "messages": [{"role": "user", "content": message}]
+            }
+            
+            # Only add system if it's a non-empty string
+            if system_prompt and isinstance(system_prompt, str):
+                kwargs["system"] = system_prompt
+                
+            stream = self.client.messages.stream(**kwargs)
             
             # Process the stream
             with stream as s:
@@ -237,13 +242,20 @@ class AnthropicProvider(LLMProvider):
                 anthropic_messages.append({"role": role, "content": msg["content"]})
             
             # Non-streaming completion
+            kwargs = {
+                "model": model,
+                "max_tokens": options.get("max_tokens", self.default_max_tokens),
+                "temperature": options.get("temperature", self.default_temperature),
+                "messages": anthropic_messages
+            }
+            
+            # Only add system if it's a non-empty string
+            if system_prompt and isinstance(system_prompt, str):
+                kwargs["system"] = system_prompt
+                
             response = await asyncio.to_thread(
                 self.client.messages.create,
-                model=model,
-                max_tokens=options.get("max_tokens", self.default_max_tokens),
-                temperature=options.get("temperature", self.default_temperature),
-                system=system_prompt,
-                messages=anthropic_messages
+                **kwargs
             )
             
             return {
@@ -299,13 +311,18 @@ class AnthropicProvider(LLMProvider):
                 anthropic_messages.append({"role": role, "content": msg["content"]})
             
             # Create a streaming request to Claude
-            stream = self.client.messages.stream(
-                model=model,
-                max_tokens=options.get("max_tokens", self.default_max_tokens),
-                temperature=options.get("temperature", self.default_temperature),
-                system=system_prompt,
-                messages=anthropic_messages
-            )
+            kwargs = {
+                "model": model,
+                "max_tokens": options.get("max_tokens", self.default_max_tokens),
+                "temperature": options.get("temperature", self.default_temperature),
+                "messages": anthropic_messages
+            }
+            
+            # Only add system if it's a non-empty string
+            if system_prompt and isinstance(system_prompt, str):
+                kwargs["system"] = system_prompt
+                
+            stream = self.client.messages.stream(**kwargs)
             
             # Process the stream
             with stream as s:

@@ -317,6 +317,20 @@ class AISpecialistManager:
             if config.status == "active":
                 active.append(await self.get_specialist_status(specialist_id))
         return active
+    
+    async def list_specialists(self) -> List[Dict[str, Any]]:
+        """
+        List all AI specialists (active and inactive).
+        
+        Returns:
+            List of specialist configurations with status
+        """
+        specialists = []
+        for specialist_id, config in self.specialists.items():
+            status = await self.get_specialist_status(specialist_id)
+            if status:
+                specialists.append(status)
+        return specialists
         
     async def start_core_specialists(self) -> Dict[str, bool]:
         """
